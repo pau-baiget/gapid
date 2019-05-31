@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.gapid.models.Strings;
 import com.google.gapid.proto.log.Log;
+import com.google.gapid.proto.perfetto.Perfetto;
 import com.google.gapid.proto.service.Service;
 import com.google.gapid.proto.service.Service.CheckForUpdatesRequest;
 import com.google.gapid.proto.service.Service.ClientEventRequest;
@@ -246,9 +247,28 @@ public class Client {
 
   }
 
+  public ListenableFuture<Perfetto.QueryResult> perfettoQuery(Path.Capture capture, String query) {
+    return call(() -> String.format("RPC->perfettoQuery(%s, %s)", shortDebugString(capture), query),
+        stack -> MoreFutures.transformAsync(
+            client.perfettoQuery(Service.PerfettoQueryRequest.newBuilder()
+                .setCapture(capture)
+                .setQuery(query)
+                .build()),
+            in -> immediateFuture(throwIfError(in.getResult(), in.getError(), stack))));
+  }
+
   public ListenableFuture<Void> streamLog(Consumer<Log.Message> onLogMessage) {
     LOG.log(FINE, "RPC->getLogStream()");
     return client.streamLog(onLogMessage);
+  }
+
+  public ListenableFuture<Void> streamStatus(
+      float memoryS, float statusS, Consumer<Service.ServerStatusResponse> onStatus) {
+    LOG.log(FINE, "RPC->streamStatus({}, {})", new Object[] { memoryS, statusS });
+    return client.streamStatus(Service.ServerStatusRequest.newBuilder()
+        .setMemorySnapshotInterval(memoryS)
+        .setStatusUpdateFrequency(statusS)
+        .build(), onStatus);
   }
 
   public ListenableFuture<Void> streamSearch(

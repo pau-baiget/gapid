@@ -16,10 +16,8 @@ package device
 
 var (
 	UnknownABI = abi("unknown", UnknownOS, UnknownArchitecture, &MemoryLayout{})
-
-	// AndroidARM defaults to v7a which is the lowest that we support.
-	AndroidARM = abi("armeabi", Android, ARMv7a, Little32)
-
+	// Keep this one in, some applications incorrectly advertise arm, when they mean armv7
+	AndroidARM      = abi("armeabi", Android, ARMv7a, ARMv7aLayout)
 	AndroidARMv7a   = abi("armeabi-v7a", Android, ARMv7a, ARMv7aLayout)
 	AndroidARM64v8a = abi("arm64-v8a", Android, ARMv8a, ARM64v8aLayout)
 	AndroidX86      = abi("x86", Android, X86, X86IA32Layout)
@@ -30,6 +28,7 @@ var (
 	LinuxX86_64   = abi("linux_x64", Linux, X86_64, Little64)
 	OSXX86_64     = abi("osx_x64", OSX, X86_64, Little64)
 	WindowsX86_64 = abi("windows_x64", Windows, X86_64, Little64)
+	StadiaX86_64  = abi("stadia", Stadia, X86_64, Little64)
 )
 
 var abiByName = map[string]*ABI{}

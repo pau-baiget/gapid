@@ -42,8 +42,8 @@ go_test(
         "//core/os/device/bind:go_default_library",
         "//gapir/client:go_default_library",
         "//gapis/database:go_default_library",
+        "//gapis/replay:go_default_library",
         "//gapis/replay/builder:go_default_library",
-        "//gapis/replay/executor:go_default_library",
         "//gapis/replay/value:go_default_library",
     ],
 )

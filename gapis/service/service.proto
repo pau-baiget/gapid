@@ -18,10 +18,12 @@ import "core/image/image.proto";
 import "core/log/log_pb/log.proto";
 import "core/os/device/device.proto";
 import "gapis/api/service.proto";
+import "gapis/perfetto/service/perfetto.proto";
 import "gapis/service/box/box.proto";
 import "gapis/service/path/path.proto";
 import "gapis/service/severity/severity.proto";
 import "gapis/stringtable/stringtable.proto";
+import "perfetto/config/perfetto_config.proto";
 
 package service;
 option java_package = "com.google.gapid.proto.service";
@@ -245,9 +247,8 @@ message MemoryStatus {
 }
 
 message ServerStatusRequest {
-  bool enable = 1;
-  float memory_snapshot_interval = 2;
-  float status_update_frequency = 3;
+  float memory_snapshot_interval = 1;
+  float status_update_frequency = 2;
 }
 
 message ServerStatusResponse {
@@ -328,6 +329,7 @@ message ExportReplayOptions {
   path.Report report = 1;
   repeated GetFramebufferAttachmentRequest get_framebuffer_attachment_requests =
       2;
+  GetTimestampsRequest get_timestamps_request = 3;
 }
 
 message ExportReplayRequest {
@@ -533,6 +535,18 @@ message UpdateSettingsResponse {
   Error error = 1;
 }
 
+message PerfettoQueryRequest {
+  path.Capture capture = 1;
+  string query = 2;
+}
+
+message PerfettoQueryResponse {
+  oneof res {
+    perfetto.QueryResult result = 1;
+    Error error = 2;
+  }
+}
+
 // Gapid is the RPC service to the GAPIS server.
 service Gapid {
   // Ping is a no-op function that returns immediately.
@@ -669,7 +683,12 @@ service Gapid {
   }
 
   // Status returns a stream of Status events that are occuring on the server
-  rpc Status(stream ServerStatusRequest) returns (stream ServerStatusResponse) {
+  rpc Status(ServerStatusRequest) returns (stream ServerStatusResponse) {
+  }
+
+  // Runs a Perfetto Query. This is done separatly from .Get, because the query
+  // results should not be cached, as they can change due to 'update' queries.
+  rpc PerfettoQuery(PerfettoQueryRequest) returns (PerfettoQueryResponse) {
   }
 
   ///////////////////////////////////////////////////////////////
@@ -754,8 +773,15 @@ message ErrUnsupportedVersion {
   bool suggest_update = 2;
 }
 
+enum TraceType {
+  Graphics = 0;
+  Perfetto = 1;
+}
+
 // Capture describes single capture file held by the server.
 message Capture {
+  // The type of this capture.
+  TraceType type = 7;
   // Name given to the capture. e.g. "KittyWorld"
   string name = 1;
   // Information about the device used to create the capture.
@@ -1078,6 +1104,8 @@ message TraceOptions {
     // The server port that should be connected to for tracing
     uint32 port = 4;
   }
+  // The type of this trace.
+  TraceType type = 23;
   // What APIs should we trace
   repeated string apis = 5;
   // Any additional command-line args to pass to the app
@@ -1114,6 +1142,8 @@ message TraceOptions {
   string server_local_save_path = 21;
   // Name of the pipe to connect/listen to.
   string pipe_name = 22;
+  // The config to use if doing a Perfetto trace.
+  perfetto.protos.TraceConfig perfetto_config = 24;
 }
 
 enum TraceEvent {
@@ -1156,12 +1186,12 @@ message DeviceTraceConfiguration {
   bool can_specify_cwd = 2;
   // Can we upload an application to trace.
   bool can_upload_application = 3;
-  // Can we specify an environment
+  // Can we specify an environment.
   bool can_specify_env = 4;
-  // The default URI that should be used for looking at packages
+  // The default URI that should be used for looking at packages.
   string preferred_root_uri = 5;
-  // API-specific trace information
-  repeated DeviceAPITraceConfiguration apis = 6;
+  // Type and API-specific capabilities.
+  repeated TraceTypeCapabilities apis = 6;
   // Is there a cache that can be cleared.
   bool has_cache = 7;
 }
@@ -1172,7 +1202,9 @@ enum FeatureStatus {
   Experimental = 2;
 }
 
-message DeviceAPITraceConfiguration {
+message TraceTypeCapabilities {
+  // The type of trace this describes.
+  TraceType type = 5;
   // What is the API this is for.
   string api = 1;
   // Does this API support disabling pre-compiled shaders.
@@ -1181,6 +1213,8 @@ message DeviceAPITraceConfiguration {
   FeatureStatus mid_execution_capture_support = 3;
   // Whether unsupported extensions can be enabled.
   bool can_enable_unsupported_extensions = 4;
+  // Does this trace require starting an application.
+  bool requires_application = 6;
 }
 
 // GetTimestampsRequest is the request send to server to get the timestamps for

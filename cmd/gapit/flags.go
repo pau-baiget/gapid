@@ -35,6 +35,13 @@ const (
 	SimpleList
 )
 
+const (
+	ExportPlain ExportMode = iota
+	ExportDiagnostics
+	ExportFrames
+	ExportTimestamps
+)
+
 type VideoType uint8
 
 var videoTypeNames = map[VideoType]string{
@@ -67,6 +74,22 @@ func (v PackagesOutput) String() string {
 	return packagesOutputNames[v]
 }
 
+type ExportMode uint8
+
+var exportModeNames = map[ExportMode]string{
+	ExportPlain:       "plain",
+	ExportDiagnostics: "diagnostics",
+	ExportFrames:      "frames",
+	ExportTimestamps:  "timestamps",
+}
+
+func (v *ExportMode) Choose(c interface{}) {
+	*v = c.(ExportMode)
+}
+func (v ExportMode) String() string {
+	return exportModeNames[v]
+}
+
 type (
 	CaptureFileFlags struct {
 		CaptureID bool `help:"if true then interpret the capture file argument as a capture ID that is already loaded in gapis"`
@@ -79,9 +102,9 @@ type (
 		Data   bool `help:"if true then display the bytes read and written by each command. Implies Ranges."`
 	}
 	DeviceFlags struct {
-		Device string            `help:"Device to trace on. Either 'host' or the friendly name of the device"`
-		Serial string            `help:"Serial of the device to trace on."`
-		Os     string            `help:"Os of the device to trace on."`
+		Device string            `help:"Device to use. Either 'host' or the friendly name of the device"`
+		Serial string            `help:"Serial of the device to use."`
+		Os     string            `help:"Os of the device to use."`
 		Env    flags.StringSlice `help:"List of environment variables to set, X=Y"`
 		Ssh    struct {
 			Config string `help:"The ssh config to use for finding remote devices"`
@@ -104,7 +127,8 @@ type (
 	}
 	GapirFlags struct {
 		DeviceFlags
-		Args string `help:"_The arguments to be passed to gapir"`
+		NoFallback bool   `help:"Do not fallback to another device if the requested one could not be found"`
+		Args       string `help:"_The arguments to be passed to gapir"`
 	}
 	GapiiFlags struct {
 		DeviceFlags
@@ -120,9 +144,11 @@ type (
 	ExportReplayFlags struct {
 		Gapis          GapisFlags
 		Gapir          GapirFlags
-		OriginalDevice bool   `help:"export replay for the original device"`
-		Out            string `help:"output directory for commands and assets"`
-		OutputFrames   bool   `help:"generate trace that output frames(disable diagnostics)"`
+		OriginalDevice bool       `help:"export replay for the original device"`
+		Out            string     `help:"output directory for commands and assets"`
+		Mode           ExportMode `help:"generate special purposed trace"`
+		Apk            string     `help:"(experimental) name of the stand-alone APK created to perform the replay. This name must be <app_package>.apk (e.g. com.example.replay.apk)"`
+		SdkPath        string     `help:"Path to Android SDK directory (default: ANDROID_SDK_HOME environment variable)"`
 		CommandFilterFlags
 		CaptureFileFlags
 	}
@@ -266,6 +292,7 @@ type (
 		DumpTrace      string `help:"dump a systrace of gapis"`
 		StartFrame     int    `help:"perform a MEC trace starting at this frame"`
 		NoOpt          bool   `help:"disables optimization of the replay stream"`
+		OutputCSV      bool   `help:"outputs data in CSV-friendly format"`
 	}
 
 	StatusFlags struct {
@@ -349,5 +376,15 @@ type (
 		Gapis  GapisFlags
 		Out    string `help:"path to save graph visualization"`
 		Format string `help:"output format of the graph: 'pbtxt' (Tensorboard) or 'dot' (Graphviz)"`
+	}
+
+	SmokeTestsFlags struct {
+	}
+
+	Trace2apkFlags struct {
+		Gapis GapisFlags
+		Gapir GapirFlags
+		CommandFilterFlags
+		CaptureFileFlags
 	}
 )

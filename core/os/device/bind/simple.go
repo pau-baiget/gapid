@@ -44,11 +44,14 @@ func (b *Simple) String() string {
 	return b.To.Serial
 }
 
+// CanTrace returns true if this device can be used to take a trace
+func (b *Simple) CanTrace() bool { return true }
+
 // Instance implements the Device interface returning the Information in the To field.
 func (b *Simple) Instance() *device.Instance { return b.To }
 
 // Status implements the Device interface returning the Status from the LastStatus field.
-func (b *Simple) Status() Status { return b.LastStatus }
+func (b *Simple) Status(ctx context.Context) Status { return b.LastStatus }
 
 // Shell implements the Device interface returning commands that will error if run.
 func (b *Simple) Shell(name string, args ...string) shell.Cmd {
@@ -130,6 +133,10 @@ func (b *Simple) IsDirectory(ctx context.Context, path string) (bool, error) {
 // GetWorkingDirectory returns the directory that this device considers CWD
 func (b *Simple) GetWorkingDirectory(ctx context.Context) (string, error) {
 	return os.Getwd()
+}
+
+func (b *Simple) IsLocal(ctx context.Context) (bool, error) {
+	return true, nil
 }
 
 // ABI implements the Device interface returning the first ABI from the Information, or UnknownABI if it has none.

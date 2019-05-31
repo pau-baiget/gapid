@@ -26,10 +26,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/gapid/core/app"
 	"github.com/google/gapid/core/app/crash"
 	"github.com/google/gapid/core/event/task"
 	"github.com/google/gapid/core/log"
 	"github.com/google/gapid/core/os/device"
+	"github.com/google/gapid/core/os/device/bind"
 	"github.com/google/gapid/core/os/shell"
 	"github.com/google/gapid/core/text"
 )
@@ -132,6 +134,14 @@ func (t sshShellTarget) String() string {
 	return c.User + "@" + c.Host + ": " + t.b.String()
 }
 
+func (b binding) Status(ctx context.Context) bind.Status {
+	_, err := b.Shell("echo", "Hello World").Call(ctx)
+	if err != nil {
+		return bind.Status_Offline
+	}
+	return bind.Status_Online
+}
+
 // Shell implements the Device interface returning commands that will error if run.
 func (b binding) Shell(name string, args ...string) shell.Cmd {
 	return shell.Command(name, args...).On(sshShellTarget{&b})
@@ -141,7 +151,7 @@ func (b binding) destroyPosixDirectory(ctx context.Context, dir string) {
 	_, _ = b.Shell("rm", "-rf", dir).Call(ctx)
 }
 
-func (b binding) createPosixTempDirectory(ctx context.Context) (string, func(context.Context), error) {
+func (b binding) createPosixTempDirectory(ctx context.Context) (string, app.Cleanup, error) {
 	dir, err := b.Shell("mktemp", "-d").Call(ctx)
 	if err != nil {
 		return "", nil, err
@@ -149,15 +159,15 @@ func (b binding) createPosixTempDirectory(ctx context.Context) (string, func(con
 	return dir, func(ctx context.Context) { b.destroyPosixDirectory(ctx, dir) }, nil
 }
 
-func (b binding) createWindowsTempDirectory(ctx context.Context) (string, func(ctx context.Context), error) {
+func (b binding) createWindowsTempDirectory(ctx context.Context) (string, app.Cleanup, error) {
 	return "", nil, fmt.Errorf("Windows remote targets are not yet supported.")
 }
 
 // MakeTempDir creates a temporary directory on the remote machine. It returns the
 // full path, and a function that can be called to clean up the directory.
-func (b binding) MakeTempDir(ctx context.Context) (string, func(ctx context.Context), error) {
+func (b binding) MakeTempDir(ctx context.Context) (string, app.Cleanup, error) {
 	switch b.os {
-	case device.Linux, device.OSX:
+	case device.Linux, device.OSX, device.Stadia:
 		return b.createPosixTempDirectory(ctx)
 	case device.Windows:
 		return b.createWindowsTempDirectory(ctx)
@@ -186,10 +196,11 @@ func (b binding) PushFile(ctx context.Context, source, dest string) error {
 		return err
 	}
 	mode := permission.Mode()
-	// If we are on windows pushing to Linux, we lose the executable
+	// If we are on windows pushing to Posix, we lose the executable
 	// bit, get it back.
 	if (b.os == device.Linux ||
-		b.os == device.OSX) &&
+		b.os == device.OSX ||
+		b.os == device.Stadia) &&
 		runtime.GOOS == "windows" {
 		mode |= 0550
 	}

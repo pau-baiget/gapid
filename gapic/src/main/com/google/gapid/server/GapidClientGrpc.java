@@ -24,6 +24,8 @@ import com.google.gapid.proto.service.GapidGrpc;
 import com.google.gapid.proto.service.Service;
 import com.google.gapid.proto.service.Service.ClientEventRequest;
 import com.google.gapid.proto.service.Service.ClientEventResponse;
+import com.google.gapid.proto.service.Service.PerfettoQueryRequest;
+import com.google.gapid.proto.service.Service.PerfettoQueryResponse;
 import com.google.gapid.proto.service.Service.PingRequest;
 import com.google.gapid.proto.service.Service.TraceTargetTreeNodeRequest;
 import com.google.gapid.proto.service.Service.TraceTargetTreeNodeResponse;
@@ -163,11 +165,25 @@ public class GapidClientGrpc implements GapidClient {
   }
 
   @Override
+  public ListenableFuture<PerfettoQueryResponse> perfettoQuery(PerfettoQueryRequest request) {
+    return client.perfettoQuery(request);
+  }
+
+  @Override
   public ListenableFuture<Void> streamLog(Consumer<Log.Message> onLogMessage) {
     StreamHandler<Log.Message> handler = StreamHandler.wrap(onLogMessage);
     stub.getLogStream(Service.GetLogStreamRequest.getDefaultInstance(), handler);
     return handler.future;
   }
+
+  @Override
+  public ListenableFuture<Void> streamStatus(
+      Service.ServerStatusRequest request, Consumer<Service.ServerStatusResponse> onStatus) {
+    StreamHandler<Service.ServerStatusResponse> handler = StreamHandler.wrap(onStatus);
+    stub.status(request, handler);
+    return handler.future;
+  }
+
 
   @Override
   public ListenableFuture<Void> streamSearch(

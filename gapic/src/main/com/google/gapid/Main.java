@@ -36,6 +36,7 @@ import com.google.gapid.util.Flags.Flag;
 import com.google.gapid.util.Logging;
 import com.google.gapid.util.Messages;
 import com.google.gapid.util.Scheduler;
+import com.google.gapid.views.TracerDialog;
 import com.google.gapid.widgets.Theme;
 import com.google.gapid.widgets.Widgets;
 
@@ -61,7 +62,7 @@ public class Main {
     Display.setAppVersion(GAPID_VERSION.toString());
 
     Settings settings = Settings.load();
-    Theme theme = Theme.load(Display.getCurrent());
+    Theme theme = Theme.load(Display.getDefault());
     ExceptionHandler handler = Crash2ExceptionHandler.register(settings);
 
     try {
@@ -140,7 +141,7 @@ public class Main {
     }
 
     private void uiStartup(Shell shell) {
-      models = Models.create(shell, settings, handler, server.getClient());
+      models = Models.create(shell, settings, handler, server.getClient(), window.getStatusBar());
       widgets = Widgets.create(shell.getDisplay(), theme, server.getClient(), models);
 
       Runnable onStart = () -> {
@@ -206,5 +207,6 @@ public class Main {
     Logging.logDir,
     Follower.logFollowRequests,
     Server.useCache,
+    TracerDialog.perfettoConfig,
   };
 }

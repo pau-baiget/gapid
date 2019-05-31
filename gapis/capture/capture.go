@@ -52,12 +52,12 @@ type Capture interface {
 }
 
 func init() {
-	protoconv.Register(toProto, fromProto)
+	protoconv.Register(toProtoWrapped, fromProtoWrapped)
 }
 
 // New returns a path to a new capture stored in the database.
 func New(ctx context.Context, c Capture) (*path.Capture, error) {
-	id, err := database.Store(ctx, c)
+	id, err := database.Store(ctx, wrapper{c})
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func ResolveFromID(ctx context.Context, id id.ID) (Capture, error) {
 	if err != nil {
 		return nil, log.Err(ctx, err, "Error resolving capture")
 	}
-	return obj.(Capture), nil
+	return obj.(wrapper).c, nil
 }
 
 // ResolveGraphicsFromID resolves a single graphics capture with the ID id.
@@ -101,6 +101,18 @@ func ResolveGraphicsFromID(ctx context.Context, id id.ID) (*GraphicsCapture, err
 	return nil, errors.New("not a graphics capture")
 }
 
+// ResolvePerfettoFromID resolves a single perfetto capture with the ID id.
+func ResolvePerfettoFromID(ctx context.Context, id id.ID) (*PerfettoCapture, error) {
+	c, err := ResolveFromID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if pc, ok := c.(*PerfettoCapture); ok {
+		return pc, nil
+	}
+	return nil, errors.New("not a Perfetto capture")
+}
+
 // ResolveFromPath resolves a single capture with the path p.
 func ResolveFromPath(ctx context.Context, p *path.Capture) (Capture, error) {
 	return ResolveFromID(ctx, p.ID.ID())
@@ -109,6 +121,11 @@ func ResolveFromPath(ctx context.Context, p *path.Capture) (Capture, error) {
 // ResolveGraphicsFromPath resolves a single graphics capture with the path p.
 func ResolveGraphicsFromPath(ctx context.Context, p *path.Capture) (*GraphicsCapture, error) {
 	return ResolveGraphicsFromID(ctx, p.ID.ID())
+}
+
+// ResolvePerfettoFromPath resolves a single perfetto capture with the path p.
+func ResolvePerfettoFromPath(ctx context.Context, p *path.Capture) (*PerfettoCapture, error) {
+	return ResolvePerfettoFromID(ctx, p.ID.ID())
 }
 
 // Import imports the capture by name and data, and stores it in the database.
@@ -189,7 +206,6 @@ func (f *File) Size() (uint64, error) {
 		return 0, err
 	}
 	return uint64(fi.Size()), nil
-
 }
 
 func toProto(ctx context.Context, c Capture) (*Record, error) {
@@ -261,9 +277,27 @@ func fromProto(ctx context.Context, r *Record) (Capture, error) {
 	}
 	defer close()
 
-	if isGFXTraceFormat(in) {
+	switch {
+	case isGFXTraceFormat(in):
 		return deserializeGFXTrace(ctx, r, in)
+	case isPerfettoTraceFormat(in):
+		return deserializePerfettoTrace(ctx, r, in)
+	default:
+		return nil, fmt.Errorf("Not a recognized capture format")
 	}
+}
 
-	return nil, errors.New("Not a recognized capture format")
+// wrapper wraps a Capture. This is needed because protoconv, which is used by
+// the database, doesn't support interfaces.
+type wrapper struct {
+	c Capture
+}
+
+func toProtoWrapped(ctx context.Context, w wrapper) (*Record, error) {
+	return toProto(ctx, w.c)
+}
+
+func fromProtoWrapped(ctx context.Context, r *Record) (wrapper, error) {
+	c, err := fromProto(ctx, r)
+	return wrapper{c}, err
 }

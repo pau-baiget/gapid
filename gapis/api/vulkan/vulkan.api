@@ -87,10 +87,14 @@ import "extensions/khr_external_memory_capabilities.api"
 import "extensions/khr_external_semaphore_capabilities.api"
 import "extensions/khr_variable_pointers.api"
 import "extensions/khr_sampler_ycbcr_conversion.api"
+import "extensions/amd_draw_indirect_count.api"
+import "extensions/khr_draw_indirect_count.api"
+import "extensions/khr_image_format_list.api"
 
 import "android/vulkan_android.api"
 import "linux/vulkan_linux.api"
 import "windows/vulkan_windows.api"
+import "ggp/vulkan_ggp.api"
 import "synthetic.api"
 import "errors.api"
 
@@ -125,7 +129,7 @@ extern ref!PhysicalDevicesAndProperties fetchPhysicalDeviceProperties(VkInstance
 extern ref!PhysicalDevicesMemoryProperties fetchPhysicalDeviceMemoryProperties(VkInstance instance, VkPhysicalDevice[] devs)
 extern ref!PhysicalDevicesAndQueueFamilyProperties fetchPhysicalDeviceQueueFamilyProperties(VkInstance instance, VkPhysicalDevice[] devs)
 extern ref!PhysicalDevicesFormatProperties fetchPhysicalDeviceFormatProperties(VkInstance instance, VkPhysicalDevice[] devs)
-extern ref!FetchedImageMemoryRequirements fetchImageMemoryRequirements(VkDevice device, VkImage image, bool hasSparseBit)
+extern ref!FetchedImageMemoryRequirements fetchImageMemoryRequirements(VkDevice device, ref!ImageObject image, bool hasSparseBit)
 extern VkMemoryRequirements fetchBufferMemoryRequirements(VkDevice device, VkBuffer buffer)
 extern ref!LinearImageLayouts fetchLinearImageSubresourceLayouts(VkDevice device, ref!ImageObject image, VkImageSubresourceRange rng)
 extern ref!DescriptorInfo fetchUsedDescriptors(ref!ShaderModuleObject pipeline)
@@ -205,6 +209,8 @@ sub ref!ExtensionSet supportedInstanceExtensions() {
   supported.ExtensionNames["VK_KHR_external_memory_capabilities"] = true
   supported.ExtensionNames["VK_KHR_external_semaphore_capabilities"] = true
   supported.ExtensionNames["VK_KHR_external_fence_capabilities"] = true
+  supported.ExtensionNames["VK_GGP_stream_descriptor_surface"] = true
+  supported.ExtensionNames["VK_GGP_frame_token"] = true
   return supported
 }
 
@@ -227,6 +233,12 @@ sub ref!ExtensionSet supportedDeviceExtensions() {
   supported.ExtensionNames["VK_KHR_maintenance1"] = true
   supported.ExtensionNames["VK_KHR_maintenance2"] = true
   supported.ExtensionNames["VK_KHR_maintenance3"] = true
+  supported.ExtensionNames["VK_GGP_stream_descriptor_surface"] = true
+  supported.ExtensionNames["VK_GGP_frame_token"] = true
+  supported.ExtensionNames["VK_AMD_draw_indirect_count"] = true
+  supported.ExtensionNames["VK_KHR_draw_indirect_count"] = true
+  supported.ExtensionNames["VK_KHR_sampler_ycbcr_conversion"] = true
+  supported.ExtensionNames["VK_KHR_image_format_list"] = true
   return supported
 }
 
@@ -237,10 +249,14 @@ sub ref!ExtensionSet supportedDeviceExtensions() {
 // This contains the draw command parameters. Only one of the draw data should be
 // valid at a time. Others should be null.
 @internal class DrawParameters {
-  ref!vkCmdDrawArgs                Draw
-  ref!vkCmdDrawIndexedArgs         DrawIndexed
-  ref!vkCmdDrawIndirectArgs        DrawIndirect
-  ref!vkCmdDrawIndexedIndirectArgs DrawIndexedIndirect
+  ref!vkCmdDrawArgs                         Draw
+  ref!vkCmdDrawIndexedArgs                  DrawIndexed
+  ref!vkCmdDrawIndirectArgs                 DrawIndirect
+  ref!vkCmdDrawIndexedIndirectArgs          DrawIndexedIndirect
+  ref!vkCmdDrawIndirectCountKHRArgs         DrawIndirectCountKHR
+  ref!vkCmdDrawIndexedIndirectCountKHRArgs  DrawIndexedIndirectCountKHR
+  ref!vkCmdDrawIndirectCountAMDArgs         DrawIndirectCountAMD
+  ref!vkCmdDrawIndexedIndirectCountAMDArgs  DrawIndexedIndirectCountAMD
 }
 
 // This contains the information about a draw
@@ -407,6 +423,10 @@ sub void clearLastDrawInfoDrawCommandParameters() {
   lastDrawInfo().CommandParameters.DrawIndexed = null
   lastDrawInfo().CommandParameters.DrawIndirect = null
   lastDrawInfo().CommandParameters.DrawIndexedIndirect = null
+  lastDrawInfo().CommandParameters.DrawIndirectCountKHR = null
+  lastDrawInfo().CommandParameters.DrawIndexedIndirectCountKHR = null
+  lastDrawInfo().CommandParameters.DrawIndirectCountAMD = null
+  lastDrawInfo().CommandParameters.DrawIndexedIndirectCountAMD = null
 }
 
 sub ref!ComputeInfo lastComputeInfo() {

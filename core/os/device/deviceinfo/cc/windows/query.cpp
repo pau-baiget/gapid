@@ -127,7 +127,7 @@ void createGlContext() {
   return;
 }
 
-bool createContext(void* platform_data) {
+bool createContext() {
   if (gContextRefCount++ > 0) {
     return true;
   }
@@ -234,5 +234,7 @@ int osMajor() { return gContext.mOsVersion.dwMajorVersion; }
 int osMinor() { return gContext.mOsVersion.dwMinorVersion; }
 
 int osPoint() { return gContext.mOsVersion.dwBuildNumber; }
+
+void glDriverPlatform(device::OpenGLDriver*) {}
 
 }  // namespace query

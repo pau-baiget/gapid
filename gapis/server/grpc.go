@@ -74,6 +74,8 @@ func NewWithListener(ctx context.Context, l net.Listener, cfg Config, srvChan ch
 			}
 			if cfg.IdleTimeout != 0 {
 				crash.Go(func() { s.stopIfIdle(ctx, server, cfg.IdleTimeout, stop) })
+			} else {
+				crash.Go(func() { s.stopOnInterrupt(ctx, server, stop) })
 			}
 			return nil
 		}, grpc.UnaryInterceptor(auth.ServerInterceptor(cfg.AuthToken)))
@@ -117,7 +119,7 @@ func (s *grpcServer) inRPC() func() {
 }
 
 // stopIfIdle calls GracefulStop on server if there are no writes the the
-// keepAlive chan within idleTimeout.
+// keepAlive chan within idleTimeout or if the current process is interrupted.
 // This function blocks until there's an idle timeout, or ctx is cancelled.
 func (s *grpcServer) stopIfIdle(ctx context.Context, server *grpc.Server, idleTimeout time.Duration, stop func()) {
 	// Split the idleTimeout into N smaller chunks, and check that there was
@@ -156,6 +158,21 @@ func (s *grpcServer) stopIfIdle(ctx context.Context, server *grpc.Server, idleTi
 			idleTime = 0
 		}
 	}
+}
+
+// stopOnInterrupt calls GracefulStop on server if the current process is interrupted.
+func (s *grpcServer) stopOnInterrupt(ctx context.Context, server *grpc.Server, stop func()) {
+	stoppedSignal, stopped := task.NewSignal()
+	defer func() {
+		stop()
+		server.GracefulStop()
+		stopped(ctx)
+	}()
+
+	// Wait for the server to stop before terminating the app.
+	app.AddCleanupSignal(stoppedSignal)
+
+	<-task.ShouldStop(ctx)
 }
 
 func (s *grpcServer) addInterrupter(f func()) (remove func()) {
@@ -330,51 +347,39 @@ func (s *grpcServer) Profile(stream service.Gapid_ProfileServer) error {
 	}
 }
 
-func (s *grpcServer) Status(stream service.Gapid_StatusServer) error {
-	defer s.inRPC()()
-	ctx := s.bindCtx(stream.Context())
+func (s *grpcServer) Status(req *service.ServerStatusRequest, stream service.Gapid_StatusServer) error {
+	// defer s.inRPC()() -- don't consider the log stream an inflight RPC.
+	ctx, cancel := task.WithCancel(stream.Context())
+	defer s.addInterrupter(cancel)()
 
-	// stop stops any running status requests
-	stop := func() error { return nil }
-	defer stop()
-	for {
-		// Grab an incoming request.
-		req, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-
-		// If there are no profile modes in the request, then the RPC can finish.
-		if !req.Enable {
-			break
-		}
-		if stop != nil {
-			stop()
-		}
-
-		f := func(t *service.TaskUpdate) {
-			stream.Send(&service.ServerStatusResponse{
-				Res: &service.ServerStatusResponse_Task{t},
-			})
-		}
-		m := func(t *service.MemoryStatus) {
-			stream.Send(&service.ServerStatusResponse{
-				Res: &service.ServerStatusResponse_Memory{t},
-			})
-		}
-
-		// Start the profile.
-		stop, err = s.handler.Status(ctx,
-			time.Duration(float32(time.Second)*req.MemorySnapshotInterval),
-			time.Duration(float32(time.Second)*req.StatusUpdateFrequency),
-			f,
-			m,
-		)
-		if err != nil {
-			return err
+	c := make(chan error)
+	f := func(t *service.TaskUpdate) {
+		if err := stream.Send(&service.ServerStatusResponse{
+			Res: &service.ServerStatusResponse_Task{t},
+		}); err != nil {
+			c <- err
+			cancel()
 		}
 	}
-	return nil
+	m := func(t *service.MemoryStatus) {
+		if err := stream.Send(&service.ServerStatusResponse{
+			Res: &service.ServerStatusResponse_Memory{t},
+		}); err != nil {
+			c <- err
+			cancel()
+		}
+	}
+	err := s.handler.Status(s.bindCtx(ctx),
+		time.Duration(float32(time.Second)*req.MemorySnapshotInterval),
+		time.Duration(float32(time.Second)*req.StatusUpdateFrequency),
+		f, m)
+
+	if err == nil {
+		select {
+		case err = <-c:
+		}
+	}
+	return err
 }
 
 func (s *grpcServer) GetPerformanceCounters(ctx xctx.Context, req *service.GetPerformanceCountersRequest) (*service.GetPerformanceCountersResponse, error) {
@@ -587,7 +592,7 @@ func (s *grpcServer) Trace(conn service.Gapid_TraceServer) error {
 	if err != nil {
 		return err
 	}
-	defer t.Dispose()
+	defer t.Dispose(ctx)
 
 	for {
 		req, err := conn.Recv()
@@ -600,7 +605,7 @@ func (s *grpcServer) Trace(conn service.Gapid_TraceServer) error {
 
 		switch r := req.Action.(type) {
 		case *service.TraceRequest_Initialize:
-			resp, err := t.Initialize(r.Initialize)
+			resp, err := t.Initialize(ctx, r.Initialize)
 			if err := service.NewError(err); err != nil {
 				r := service.TraceResponse{Res: &service.TraceResponse_Error{
 					Error: err,
@@ -610,7 +615,7 @@ func (s *grpcServer) Trace(conn service.Gapid_TraceServer) error {
 			}
 			conn.Send(&service.TraceResponse{Res: &service.TraceResponse_Status{Status: resp}})
 		case *service.TraceRequest_QueryEvent:
-			resp, err := t.Event(r.QueryEvent)
+			resp, err := t.Event(ctx, r.QueryEvent)
 			if err := service.NewError(err); err != nil {
 				r := service.TraceResponse{Res: &service.TraceResponse_Error{
 					Error: err,
@@ -631,4 +636,12 @@ func (s *grpcServer) GetTimestamps(ctx xctx.Context, req *service.GetTimestampsR
 		return &service.GetTimestampsResponse{Res: &service.GetTimestampsResponse_Error{Error: err}}, nil
 	}
 	return data.(*service.GetTimestampsResponse), nil
+}
+
+func (s *grpcServer) PerfettoQuery(ctx xctx.Context, req *service.PerfettoQueryRequest) (*service.PerfettoQueryResponse, error) {
+	data, err := s.handler.PerfettoQuery(s.bindCtx(ctx), req.Capture, req.Query)
+	if err := service.NewError(err); err != nil {
+		return &service.PerfettoQueryResponse{Res: &service.PerfettoQueryResponse_Error{Error: err}}, nil
+	}
+	return &service.PerfettoQueryResponse{Res: &service.PerfettoQueryResponse_Result{Result: data}}, nil
 }

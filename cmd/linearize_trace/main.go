@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The gapid command launches the GAPID UI. It looks for the JVM (bundled or
-// from the system), the GAPIC JAR (bundled or from the build output) and
-// launches GAPIC with the correct JVM flags and environment variables.
+// The linearize_trace command takes a trace that has an initial state,
+// and converts it to a trace that is prefixed with all of the commands
+// needed to reset the state in that trace.
 package main
 
 import (
@@ -56,7 +56,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	// Ensure the capture can be read by resolving it now.
-	capt, err := capture.ResolveFromPath(ctx, p)
+	capt, err := capture.ResolveGraphicsFromPath(ctx, p)
 	if err != nil {
 		return err
 	}

@@ -19,7 +19,7 @@ _NATIVE_LIBRARIES = {
     "VkLayer_VirtualSwapchain": "//core/vulkan/vk_virtual_swapchain/apk",
     "gapii": "//gapii/apk",
     "interceptor": "//gapii/apk",
-    "VkLayerGraphicsSpy": "//gapii/apk",
+    "VkLayer_GraphicsSpy": "//gapii/apk",
     "gapir": "//cmd/gapir/apk",
 }
 
@@ -27,14 +27,14 @@ gapid_apk(
     name = "armeabi-v7a",
     abi = "armeabi-v7a",
     libs = _NATIVE_LIBRARIES,
-    pkg = "armeabi",
+    pkg = "armeabiv7a",
 )
 
 gapid_apk(
     name = "arm64-v8a",
     abi = "arm64-v8a",
     libs = _NATIVE_LIBRARIES,
-    pkg = "aarch64",
+    pkg = "arm64v8a",
 )
 
 gapid_apk(

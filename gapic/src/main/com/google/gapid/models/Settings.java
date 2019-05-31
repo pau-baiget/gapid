@@ -67,6 +67,7 @@ public class Settings {
   public int[] shaderSplitterWeights = new int[] { 70, 30 };
   public int[] texturesSplitterWeights = new int[] { 20, 80 };
   public String traceDevice = "";
+  public String traceType = "Graphics";
   public String traceApi = "";
   public String traceUri = "";
   public String traceArguments = "";
@@ -90,6 +91,8 @@ public class Settings {
   public String analyticsClientId = ""; // Empty means do not track.
   public boolean disableReplayOptimization = false;
   public boolean reportCrashes = false;
+  public int[] perfettoSplitterWeights = new int[] { 85, 15 };
+  public boolean perfettoDarkMode = false;
 
   public static Settings load() {
     Settings result = new Settings();
@@ -217,6 +220,7 @@ public class Settings {
     texturesSplitterWeights =
         getIntList(properties, "texture.splitter.weights", texturesSplitterWeights);
     traceDevice = properties.getProperty("trace.device", traceDevice);
+    traceType = properties.getProperty("trace.type", traceType);
     traceApi = properties.getProperty("trace.api", traceApi);
     traceUri = properties.getProperty("trace.uri", traceUri);
     traceArguments = properties.getProperty("trace.arguments", traceArguments);
@@ -241,6 +245,9 @@ public class Settings {
     disableReplayOptimization =
         getBoolean(properties, "replay.disableOptimization", disableReplayOptimization);
     reportCrashes = getBoolean(properties, "crash.reporting", reportCrashes);
+    perfettoSplitterWeights =
+        getIntList(properties, "perfetto.splitter.weights", perfettoSplitterWeights);
+    perfettoDarkMode = getBoolean(properties, "perfetto.dark", perfettoDarkMode);
   }
 
   private void updateTo(Properties properties) {
@@ -260,6 +267,7 @@ public class Settings {
     setIntList(properties, "shader.splitter.weights", shaderSplitterWeights);
     setIntList(properties, "texture.splitter.weights", texturesSplitterWeights);
     properties.setProperty("trace.device", traceDevice);
+    properties.setProperty("trace.type", traceType);
     properties.setProperty("trace.api", traceApi);
     properties.setProperty("trace.uri", traceUri);
     properties.setProperty("trace.arguments", traceArguments);
@@ -284,6 +292,8 @@ public class Settings {
     properties.setProperty(
         "replay.disableOptimization",  Boolean.toString(disableReplayOptimization));
     properties.setProperty("crash.reporting", Boolean.toString(reportCrashes));
+    setIntList(properties, "perfetto.splitter.weights", perfettoSplitterWeights);
+    properties.setProperty("perfetto.dark", Boolean.toString(perfettoDarkMode));
   }
 
   private static Point getPoint(Properties properties, String name) {

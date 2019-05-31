@@ -28,8 +28,8 @@ import (
 	"github.com/google/gapid/core/os/device/bind"
 	gapir "github.com/google/gapid/gapir/client"
 	"github.com/google/gapid/gapis/database"
+	"github.com/google/gapid/gapis/replay"
 	"github.com/google/gapid/gapis/replay/builder"
-	"github.com/google/gapid/gapis/replay/executor"
 	"github.com/google/gapid/gapis/replay/value"
 )
 
@@ -59,6 +59,11 @@ func doReplay(t *testing.T, f func(*builder.Builder)) error {
 		t.Errorf("Failed to connect to '%v': %v", device, err)
 		return err
 	}
+	bgc, err := replay.MakeBackgroundConnection(ctx, device, connection, abi)
+	if err != nil {
+		t.Errorf("Failed to set up background connection to '%v': %v", device, err)
+		return err
+	}
 
 	b := builder.New(abi.MemoryLayout, nil)
 
@@ -70,7 +75,7 @@ func doReplay(t *testing.T, f func(*builder.Builder)) error {
 		return err
 	}
 
-	err = executor.Execute(ctx, payload, decoder, notification, connection, abi.MemoryLayout, os)
+	err = replay.Execute(ctx, "", payload, decoder, notification, bgc, abi.MemoryLayout, os)
 	if err != nil {
 		t.Errorf("Executor failed with error: %v", err)
 		return err

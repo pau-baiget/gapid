@@ -14,134 +14,129 @@
  * limitations under the License.
  */
 
-#include "vulkan/vulkan.h"
+#include <alloca.h>
+#include <android/log.h>
+#include <dlfcn.h>
+#include <cstring>
 
-#if defined(_WIN32)
-#define VK_LAYER_EXPORT __declspec(dllexport)
-#elif defined(__GNUC__)
-#define VK_LAYER_EXPORT __attribute__((visibility("default")))
-#else
-#define VK_LAYER_EXPORT
-#endif
+#include <unistd.h>
+#include "vulkan/vulkan.h"
 
 extern "C" {
 
-typedef void *(*eglGetProcAddress)(char const *procname);
+#define VK_LAYER_EXPORT __attribute__((visibility("default")))
+typedef void* (*eglGetProcAddress)(const char* procname);
 
-#ifdef _WIN32
-#include <windows.h>
-#include <cstdio>
-// On windows we do not have linker namespaces, we also don't have a
-// convenient way to have already loaded libgapii.dll. In this case
-// we can just LoadModule(libgapii.dll) and get the pointers from there.
-#define PROC(name)                                          \
-  static PFN_##name fn = (PFN_##name)getProcAddress(#name); \
+#define LOG_DEBUG(fmt, ...) \
+  __android_log_print(ANDROID_LOG_DEBUG, "GAPID", fmt, ##__VA_ARGS__)
+
+#define PROC(name)                                                     \
+  static PFN_##name fn = (PFN_##name)(getProcAddress("gapid_" #name)); \
   if (fn != nullptr) return fn
 
-HMODULE LoadGAPIIDLL() {
-  char path[MAX_PATH] = {'\0'};
-  HMODULE this_module = GetModuleHandle("libVkLayer_GraphicsSpy.dll");
-  const char libgapii[] = "libgapii.dll";
-  if (this_module == NULL) {
-    fprintf(stderr, "Could not find libVkLayer_GraphicsSpy.dll\n");
-    return 0;
-  }
-  SetLastError(0);
-  DWORD num_characters = GetModuleFileName(this_module, path, MAX_PATH);
-  if (GetLastError() != 0) {
-    fprintf(stderr, "Could not the path to libVkLayer_GraphicsSpy.dll\n");
-    return 0;
-  }
-  for (DWORD i = num_characters - 1; i >= 0; --i) {
-    // Wipe out the file-name but keep the directory name if we can.
-    if (path[i] == '\\') {
-      path[i] = '\0';
-    }
-    num_characters = i + 1;
-  }
+static void* getLibGapii();
 
-  if (num_characters + strlen(libgapii) + 1 > MAX_PATH) {
-    fprintf(stderr, "Path too long\n");
-    return 0;
-  }
-  // Append "libgapii.dll" to the full path of libVKLayer_GraphicsSpy
-  memcpy(path + num_characters, libgapii, strlen(libgapii) + 1);
-  return LoadLibrary(path);
-}
-
-FARPROC getProcAddress(const char *name) {
-  static HMODULE libgapii = LoadGAPIIDLL();
-  if (libgapii != NULL) {
-    return GetProcAddress(libgapii, name);
-  }
-  return NULL;
-}
-
-#else
-
-#include <dlfcn.h>
-
-#define PROC(name)                                                       \
-  static PFN_##name fn = (PFN_##name)(getProcAddress()("gapid_" #name)); \
-  if (fn != nullptr) return fn
-
-// On android due to linker namespaces we cannot open libgapii.so,
-// but since we already have it loaded, and libEGL.so hooked,
-// we can use eglGetProcAddress to find the functions.
-eglGetProcAddress getProcAddress() {
-  static void *libegl = dlopen("libEGL.so", RTLD_NOW);
+// Up to and including Android P, libgapii, which contains the actual layer
+// functions, is loaded via JDWP. Thus, use libEGL's eglGetProcAddress to find
+// the functions. Starting with Q, libgapii will not be loaded via JDWP
+// anymore, so we load it here if eglGetProcAddress can't find the symbol.
+static void* getProcAddress(const char* name) {
+  static void* libegl = dlopen("libEGL.so", RTLD_NOW);
   static eglGetProcAddress pa =
       (eglGetProcAddress)dlsym(libegl, "eglGetProcAddress");
-  return pa;
+
+  LOG_DEBUG("Looking for function %s", name);
+  void* result = pa(name);
+  if (result == nullptr) {
+    result = dlsym(getLibGapii(), name);
+  }
+  return result;
 }
-#endif
 
 VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-VkGraphicsSpyGetDeviceProcAddr(VkDevice dev, const char *funcName) {
+GraphicsSpyGetDeviceProcAddr(VkDevice dev, const char* funcName) {
   PROC(vkGetDeviceProcAddr)(dev, funcName);
   return nullptr;
 }
 
 VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-VkGraphicsSpyGetInstanceProcAddr(VkInstance instance, const char *funcName) {
+GraphicsSpyGetInstanceProcAddr(VkInstance instance, const char* funcName) {
   PROC(vkGetInstanceProcAddr)(instance, funcName);
   return nullptr;
 }
 
-VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
-vkEnumerateInstanceLayerProperties(uint32_t *pCount,
-                                   VkLayerProperties *pProperties) {
-  PROC(vkEnumerateInstanceLayerProperties)(pCount, pProperties);
-  *pCount = 0;
+// This should probably match the struct in vulkan_extras.cpp's
+// SpyOverride_vkEnumerateInstanceLayerProperties.
+static const VkLayerProperties global_layer_properties[] = {{
+    "GraphicsSpy",
+    VK_VERSION_MAJOR(1) | VK_VERSION_MINOR(0) | 5,
+    1,
+    "vulkan_trace",
+}};
+
+static VkResult get_layer_properties(uint32_t* pCount,
+                                     VkLayerProperties* pProperties) {
+  if (pProperties == NULL) {
+    *pCount = 1;
+    return VK_SUCCESS;
+  }
+
+  if (pCount == 0) {
+    return VK_INCOMPLETE;
+  }
+  *pCount = 1;
+  memcpy(pProperties, global_layer_properties, sizeof(global_layer_properties));
   return VK_SUCCESS;
+}
+
+VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
+vkEnumerateInstanceLayerProperties(uint32_t* pCount,
+                                   VkLayerProperties* pProperties) {
+  return get_layer_properties(pCount, pProperties);
 }
 
 // On Android this must also be defined, even if we have 0
 // layers to expose.
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
-vkEnumerateInstanceExtensionProperties(const char *pLayerName, uint32_t *pCount,
-                                       VkExtensionProperties *pProperties) {
-  PROC(vkEnumerateInstanceExtensionProperties)(pLayerName, pCount, pProperties);
+vkEnumerateInstanceExtensionProperties(const char* pLayerName, uint32_t* pCount,
+                                       VkExtensionProperties* pProperties) {
   *pCount = 0;
   return VK_SUCCESS;
 }
 
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceLayerProperties(
-    VkPhysicalDevice device, uint32_t *pCount, VkLayerProperties *pProperties) {
-  PROC(vkEnumerateDeviceLayerProperties)(device, pCount, pProperties);
-  *pCount = 0;
-  return VK_SUCCESS;
+    VkPhysicalDevice device, uint32_t* pCount, VkLayerProperties* pProperties) {
+  return get_layer_properties(pCount, pProperties);
 }
 
 // On android this must also be defined, even if we have 0
 // layers to expose.
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
 vkEnumerateDeviceExtensionProperties(VkPhysicalDevice device,
-                                     const char *pLayerName, uint32_t *pCount,
-                                     VkExtensionProperties *pProperties) {
-  PROC(vkEnumerateDeviceExtensionProperties)
-  (device, pLayerName, pCount, pProperties);
+                                     const char* pLayerName, uint32_t* pCount,
+                                     VkExtensionProperties* pProperties) {
   *pCount = 0;
   return VK_SUCCESS;
 }
+
+static void* getLibGapii() {
+  static void* libgapii = nullptr;
+  if (libgapii == nullptr) {
+    Dl_info me;
+    dladdr((void*)GraphicsSpyGetDeviceProcAddr, &me);
+    if (me.dli_fname != nullptr) {
+      const char* base = strrchr(me.dli_fname, '/');
+      if (base != nullptr) {
+        int baseLen = base - me.dli_fname + 1;
+        char* name = static_cast<char*>(alloca(baseLen + 12 /*"libgapii.so"*/));
+        memcpy(name, me.dli_fname, baseLen);
+        strncpy(name + baseLen, "libgapii.so", 12);
+        LOG_DEBUG("Loading gapii at %s", name);
+        libgapii = dlopen(name, RTLD_NOW);
+      }
+    }
+  }
+  return libgapii;
+}
+
 }  // extern "C"

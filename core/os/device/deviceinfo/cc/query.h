@@ -64,7 +64,7 @@ struct Option {
 
 // getDeviceInstance returns the device::Instance proto message for the
 // current device. It must be freed with delete.
-device::Instance* getDeviceInstance(const Option& opt, void* platform_data);
+device::Instance* getDeviceInstance(const Option& opt);
 
 // updateVulkanPhysicalDevices modifies the given device::Instance by adding
 // device::VulkanPhysicalDevice to the device::Instance. If a
@@ -76,10 +76,10 @@ device::Instance* getDeviceInstance(const Option& opt, void* platform_data);
 // ID re-hashed with the new content. Returns true if Vulkan physical device
 // info is fetched successfully and device::Instance updated, otherwise returns
 // false and keeps the device::Instance unchanged. Caution: When called with
-// VkGraphicsSpy layer loaded i.e. during tracing, the function pointer to a
-// layer under VkGraphicsSpy must be passed in. Resolving the Vulkan function
-// addresses from loader will cause a infinite calling stack and may deadlock
-// in the loader.
+// GraphicsSpy layer loaded i.e. during tracing, the function pointer to a layer
+// under GraphicsSpy must be passed in. Resolving the Vulkan function addresses
+// from loader will cause a infinite calling stack and may deadlock in the
+// loader.
 bool updateVulkanDriver(
     device::Instance* inst, size_t vk_inst_handle = 0,
     std::function<void*(size_t, const char*)> get_inst_proc_addr = nullptr);
@@ -112,7 +112,7 @@ bool hasGLorGLES();
 // The functions below are used by getDeviceInstance(), and are implemented
 // in the target-dependent sub-directories.
 
-bool createContext(void* platform_data);
+bool createContext();
 const char* contextError();
 void destroyContext();
 
@@ -135,7 +135,10 @@ const char* gpuVendor();
 
 const char* instanceName();
 
+// This queries the platform independent GL things.
 void glDriver(device::OpenGLDriver*);
+// This queries the platform depended GL things.
+void glDriverPlatform(device::OpenGLDriver*);
 
 device::OSKind osKind();
 const char* osName();

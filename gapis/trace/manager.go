@@ -46,18 +46,31 @@ func New(ctx context.Context) *Manager {
 }
 
 func (m *Manager) createTracer(ctx context.Context, dev bind.Device) {
+	if !dev.CanTrace() {
+		return
+	}
 	deviceID := dev.Instance().ID.ID()
 	log.I(ctx, "New trace scheduler for device: %v %v", deviceID, dev.Instance().Name)
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	if dev.Instance().GetConfiguration().GetOS().GetKind() == device.Android {
 		m.tracers[deviceID] = android.NewTracer(dev)
+	} else if dev.Instance().GetConfiguration().GetOS().GetKind() == device.Stadia {
+		if tracer, err := desktop.NewGGPTracer(ctx, dev); err == nil {
+			m.tracers[deviceID] = tracer
+		} else {
+			log.E(ctx, "Could not resolve GGP device %+v, trying as desktop", err)
+			m.tracers[deviceID] = desktop.NewTracer(dev)
+		}
 	} else {
 		m.tracers[deviceID] = desktop.NewTracer(dev)
 	}
 }
 
 func (m *Manager) destroyTracer(ctx context.Context, dev bind.Device) {
+	if !dev.CanTrace() {
+		return
+	}
 	deviceID := dev.Instance().ID.ID()
 	log.I(ctx, "Destroying trace scheduler for device: %v", deviceID)
 	m.mutex.Lock()

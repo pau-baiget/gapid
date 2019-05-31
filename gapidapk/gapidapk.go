@@ -66,7 +66,7 @@ func ensureInstalled(ctx context.Context, d adb.Device, abi *device.ABI) (*APK, 
 		return nil, log.Errf(ctx, nil, "Device does not support requested abi: %v", abi.Name)
 	}
 
-	name := pkgName(abi)
+	name := PackageName(abi)
 
 	log.I(ctx, "Examining gapid.apk on host...")
 	apkPath, err := layout.GapidApk(ctx, abi)
@@ -164,8 +164,7 @@ func EnsureInstalled(ctx context.Context, d adb.Device, abi *device.ABI) (*APK, 
 // gapid.apk must be installed for this path to be valid.
 func (a APK) LibsPath(abi *device.ABI) string {
 	switch {
-	case abi.SameAs(device.AndroidARM),
-		abi.SameAs(device.AndroidARMv7a):
+	case abi.SameAs(device.AndroidARMv7a):
 		return a.path + "/lib/arm"
 	case abi.SameAs(device.AndroidARM64v8a):
 		return a.path + "/lib/arm64"
@@ -173,27 +172,48 @@ func (a APK) LibsPath(abi *device.ABI) string {
 	return a.path + "/lib/" + abi.Name
 }
 
-// LibGAPIIPath returns the path on the Android device to libgapii.so.
+// LibGAPIIPath returns the path on the Android device to the GAPII dynamic
+// library file.
 // gapid.apk must be installed for this path to be valid.
 func (a APK) LibGAPIIPath(abi *device.ABI) string {
-	return a.LibsPath(abi) + "/libgapii.so"
+	return a.LibsPath(abi) + "/" + LibGAPIIName
 }
 
-// LibInterceptorPath returns the path on the Android device to
-// libinterceptor.so.
+// LibInterceptorPath returns the path on the Android device to the
+// interceptor dynamic library file.
 // gapid.apk must be installed for this path to be valid.
 func (a APK) LibInterceptorPath(abi *device.ABI) string {
-	return a.LibsPath(abi) + "/libinterceptor.so"
+	return a.LibsPath(abi) + "/" + LibInterceptorName
 }
 
-func pkgName(abi *device.ABI) string {
+const (
+	// LibGAPIIName is the name of the GAPII dynamic library file.
+	LibGAPIIName = "libgapii.so"
+
+	// LibInterceptorName is the name of the interceptor dynamic library file.
+	LibInterceptorName = "libinterceptor.so"
+
+	// GraphicsSpyLayerName is the name of the graphics spy layer.
+	GraphicsSpyLayerName = "GraphicsSpy"
+)
+
+// PackageName returns the full package name of the GAPID apk for the given ABI.
+func PackageName(abi *device.ABI) string {
 	switch {
-	case abi.SameAs(device.AndroidARM),
-		abi.SameAs(device.AndroidARMv7a):
-		return "com.google.android.gapid.armeabi"
+	case abi.SameAs(device.AndroidARMv7a):
+		return "com.google.android.gapid.armeabiv7a"
 	case abi.SameAs(device.AndroidARM64v8a):
-		return "com.google.android.gapid.aarch64"
+		return "com.google.android.gapid.arm64v8a"
 	default:
 		return fmt.Sprintf("com.google.android.gapid.%v", abi.Name)
+	}
+}
+
+// LayerName returns the name of the layer to use for Vulkan vs GLES.
+func LayerName(vulkan bool) string {
+	if vulkan {
+		return GraphicsSpyLayerName
+	} else {
+		return LibGAPIIName
 	}
 }

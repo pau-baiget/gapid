@@ -65,9 +65,9 @@ func (c *client) onDeviceAdded(ctx context.Context, host *device.Instance, targe
 	traceOnTarget := func(ctx context.Context, t *Task) error {
 		job.LockDevice(ctx, target)
 		defer job.UnlockDevice(ctx, target)
-		if target.Status() != bind.Status_Online {
+		if target.Status(ctx) != bind.Status_Online {
 			log.I(ctx, "Trying to trace %s on %s not started, device status %s",
-				t.Input.Subject, target.Instance().GetSerial(), target.Status().String())
+				t.Input.Subject, target.Instance().GetSerial(), target.Status(ctx).String())
 			return nil
 		}
 		return c.trace(ctx, target, t)
@@ -119,6 +119,11 @@ func doTrace(ctx context.Context, action string, in *Input, store *stash.Client,
 		return nil, err
 	}
 
+	gapis, err := extractedLayout.Gapis(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	gapit, err := extractedLayout.Gapit(ctx)
 	if err != nil {
 		return nil, err
@@ -137,6 +142,9 @@ func doTrace(ctx context.Context, action string, in *Input, store *stash.Client,
 	if err := store.GetFile(ctx, in.Subject, subject); err != nil {
 		return nil, err
 	}
+	if err := store.GetFile(ctx, in.Gapis, gapis); err != nil {
+		return nil, err
+	}
 	if err := store.GetFile(ctx, in.Gapit, gapit); err != nil {
 		return nil, err
 	}
@@ -147,12 +155,11 @@ func doTrace(ctx context.Context, action string, in *Input, store *stash.Client,
 	params := []string{
 		"trace",
 		"-out", tracefile.System(),
-		"-apk", subject.System(),
 		"-for", traceTime.String(),
 		"-disable-pcs",
 		"-observe-frames", strconv.Itoa(observeEveryNthFrame),
 		"-record-errors",
-		"-gapii-device", d.Instance().Serial,
+		"-serial", d.Instance().Serial,
 		"-api", in.GetHints().GetAPI(),
 	}
 
@@ -166,9 +173,11 @@ func doTrace(ctx context.Context, action string, in *Input, store *stash.Client,
 		defer func() {
 			file.Remove(obb)
 		}()
-		params = append(params, "-obb", obb.System())
+		// TODO fix this
+		// params = append(params, "-obb", obb.System())
+		return log.Errf(ctx, nil, "OBBs are currently not supported")
 	}
-	cmd := shell.Command(gapit.System(), params...)
+	cmd := shell.Command(gapit.System(), append(params, "apk:"+subject.System())...)
 	outBuf := &bytes.Buffer{}
 	errBuf := &bytes.Buffer{}
 	outputObj := &Output{}

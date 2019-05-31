@@ -66,6 +66,11 @@ func (g *GraphicsCapture) Name() string {
 	return g.name
 }
 
+// Path returns the path of this capture in the database.
+func (g *GraphicsCapture) Path(ctx context.Context) (*path.Capture, error) {
+	return New(ctx, g)
+}
+
 type InitialState struct {
 	Memory []api.CmdObservation
 	APIs   map[api.API]api.State
@@ -183,6 +188,7 @@ func (c *GraphicsCapture) Service(ctx context.Context, p *path.Capture) *service
 		}
 	}
 	return &service.Capture{
+		Type:         service.TraceType_Graphics,
 		Name:         c.name,
 		Device:       c.Header.Device,
 		ABI:          c.Header.ABI,

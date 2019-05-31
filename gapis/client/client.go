@@ -25,6 +25,7 @@ import (
 	"github.com/google/gapid/core/log/log_pb"
 	"github.com/google/gapid/core/net/grpcutil"
 	"github.com/google/gapid/gapis/api"
+	perfetto "github.com/google/gapid/gapis/perfetto/service"
 	"github.com/google/gapid/gapis/service"
 	"github.com/google/gapid/gapis/service/path"
 	"github.com/google/gapid/gapis/stringtable"
@@ -109,6 +110,9 @@ func (c *client) Set(ctx context.Context, p *path.Any, v interface{}, r *path.Re
 	if err != nil {
 		return nil, err
 	}
+	if err := res.GetError(); err != nil {
+		return nil, err.Get()
+	}
 	return res.GetPath(), nil
 }
 
@@ -182,49 +186,35 @@ func (c *client) Profile(
 }
 
 func (c *client) Status(
-	ctx context.Context, snapshotInterval time.Duration, statusUpdateFrequency time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus)) (stop func() error, err error) {
+	ctx context.Context, snapshotInterval time.Duration, statusUpdateFrequency time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus)) error {
 
-	stream, err := c.client.Status(ctx)
+	req := &service.ServerStatusRequest{MemorySnapshotInterval: float32(snapshotInterval.Seconds()), StatusUpdateFrequency: float32(statusUpdateFrequency.Seconds())}
+
+	stream, err := c.client.Status(ctx, req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	req := &service.ServerStatusRequest{Enable: true, MemorySnapshotInterval: float32(snapshotInterval.Seconds()), StatusUpdateFrequency: float32(statusUpdateFrequency.Seconds())}
-
-	if err := stream.Send(req); err != nil {
-		return nil, err
-	}
-
-	waitForEOF := task.Async(ctx, func(ctx context.Context) error {
-		for {
-			r, err := stream.Recv()
-			if err != nil {
-				if errors.Cause(err) == io.EOF {
-					return nil
-				}
-				return err
+	for {
+		r, err := stream.Recv()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
 			}
-			if _, ok := r.Res.(*service.ServerStatusResponse_Task); ok {
-				if f != nil {
-					f(r.GetTask())
-				}
-			} else if _, ok := r.Res.(*service.ServerStatusResponse_Memory); ok {
-				if m != nil {
-					m(r.GetMemory())
-				}
-			}
-		}
-	})
-
-	stop = func() error {
-		// Tell the server we want to stop profiling.
-		if err := stream.Send(&service.ServerStatusRequest{}); err != nil {
 			return err
 		}
-		return waitForEOF()
+		if _, ok := r.Res.(*service.ServerStatusResponse_Task); ok {
+			if f != nil {
+				f(r.GetTask())
+			}
+		} else if _, ok := r.Res.(*service.ServerStatusResponse_Memory); ok {
+			if m != nil {
+				m(r.GetMemory())
+			}
+		}
 	}
 
-	return stop, nil
+	return nil
 }
 
 func (c *client) GetPerformanceCounters(ctx context.Context) (string, error) {
@@ -458,7 +448,7 @@ func (c *client) Trace(ctx context.Context) (service.TraceHandler, error) {
 	return &traceHandler{res}, nil
 }
 
-func (t *traceHandler) Initialize(opts *service.TraceOptions) (*service.StatusResponse, error) {
+func (t *traceHandler) Initialize(ctx context.Context, opts *service.TraceOptions) (*service.StatusResponse, error) {
 	err := t.conn.Send(
 		&service.TraceRequest{
 			Action: &service.TraceRequest_Initialize{
@@ -475,7 +465,7 @@ func (t *traceHandler) Initialize(opts *service.TraceOptions) (*service.StatusRe
 	return res.GetStatus(), nil
 }
 
-func (t *traceHandler) Event(evt service.TraceEvent) (*service.StatusResponse, error) {
+func (t *traceHandler) Event(ctx context.Context, evt service.TraceEvent) (*service.StatusResponse, error) {
 	err := t.conn.Send(
 		&service.TraceRequest{
 			Action: &service.TraceRequest_QueryEvent{
@@ -492,7 +482,7 @@ func (t *traceHandler) Event(evt service.TraceEvent) (*service.StatusResponse, e
 	return res.GetStatus(), nil
 }
 
-func (t *traceHandler) Dispose() {
+func (t *traceHandler) Dispose(ctx context.Context) {
 	t.conn.CloseSend()
 }
 
@@ -544,4 +534,18 @@ func (c *client) GetGraphVisualization(ctx context.Context, capture *path.Captur
 		return []byte{}, err.Get()
 	}
 	return res.GetGraphVisualization(), nil
+}
+
+func (c *client) PerfettoQuery(ctx context.Context, capture *path.Capture, query string) (*perfetto.QueryResult, error) {
+	res, err := c.client.PerfettoQuery(ctx, &service.PerfettoQueryRequest{
+		Capture: capture,
+		Query:   query,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := res.GetError(); err != nil {
+		return nil, err.Get()
+	}
+	return res.GetResult(), nil
 }

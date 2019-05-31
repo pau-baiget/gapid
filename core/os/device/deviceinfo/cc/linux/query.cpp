@@ -225,7 +225,7 @@ void createGlContext() {
                            gContext.mPbuffer, gContext.mGlCtx);
 }
 
-bool createContext(void* platform_data) {
+bool createContext() {
   if (gContextRefCount++ > 0) {
     return true;
   }
@@ -293,5 +293,7 @@ int osMajor() { return 0; }
 int osMinor() { return 0; }
 
 int osPoint() { return 0; }
+
+void glDriverPlatform(device::OpenGLDriver*) {}
 
 }  // namespace query

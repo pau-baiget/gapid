@@ -27,6 +27,7 @@ import (
 	"github.com/google/gapid/core/os/device"
 	"github.com/google/gapid/gapis/api"
 	"github.com/google/gapid/gapis/memory"
+	perfetto "github.com/google/gapid/gapis/perfetto/service"
 	"github.com/google/gapid/gapis/service/box"
 	"github.com/google/gapid/gapis/service/path"
 	"github.com/google/gapid/gapis/service/severity"
@@ -140,7 +141,7 @@ type Service interface {
 		snapshotInterval time.Duration,
 		statusUpdateFrequency time.Duration,
 		f func(*TaskUpdate),
-		m func(*MemoryStatus)) (stop func() error, err error)
+		m func(*MemoryStatus)) error
 
 	// GetPerformanceCounters returns the values of all global counters as
 	// a string.
@@ -173,12 +174,15 @@ type Service interface {
 	UpdateSettings(ctx context.Context, req *UpdateSettingsRequest) error
 
 	GetTimestamps(ctx context.Context, c *path.Capture, d *path.Device) (interface{}, error)
+
+	// Run a perfetto query
+	PerfettoQuery(ctx context.Context, c *path.Capture, query string) (*perfetto.QueryResult, error)
 }
 
 type TraceHandler interface {
-	Initialize(*TraceOptions) (*StatusResponse, error)
-	Event(TraceEvent) (*StatusResponse, error)
-	Dispose()
+	Initialize(context.Context, *TraceOptions) (*StatusResponse, error)
+	Event(context.Context, TraceEvent) (*StatusResponse, error)
+	Dispose(context.Context)
 }
 
 // FindHandler is the handler of found items using Service.Find.

@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -124,8 +125,11 @@ func (verb *benchmarkVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 		defer func() {
 			stopGapitTrace()
 			stopGapisTrace()
-			if err := writeTrace(verb.DumpTrace, gapisTrace, gapitTrace); err != nil {
-				log.E(ctx, "Failed to write trace: %v", err)
+			// writeTrace may not be initialized yet
+			if writeTrace != nil {
+				if err := writeTrace(verb.DumpTrace, gapisTrace, gapitTrace); err != nil {
+					log.E(ctx, "Failed to write trace: %v", err)
+				}
 			}
 		}()
 	}
@@ -383,7 +387,18 @@ func (verb *benchmarkVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 
 	status.Event(ctx, status.GlobalScope, "Load done, interaction starting %+v", verb.traceSizeInBytes)
 
-	// Sleep for 20 seconds
+	// Sleep for 20 seconds so that the server is idle before we do
+	// the last part of the benchmark. When we open a trace we, in the
+	// background, generate the Dependency Graph. If we start making
+	// requests before that is done, we will skew the benchmarking
+	// results for 2 reasons:
+	//
+	//  1. Because the CPU will be under load for building the Dep
+	//  graph
+	//
+	//  2. Because requests that normally use the dep graph (getting
+	//  the framebuffer observations in this case) won't take
+	//  advantage of it.
 	time.Sleep(20 * time.Second)
 
 	ctx = status.Start(oldCtx, "Interacting with frame")
@@ -497,6 +512,9 @@ func (verb *benchmarkVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 			mem = memory.Reads[0]
 		} else if len(memory.Writes) > 0 {
 			mem = memory.Writes[0]
+		} else {
+			log.I(ctx, "No memory observations.")
+			return
 		}
 		client.Get(ctx, commandToClick.MemoryAfter(0, mem.Base, 64*1024).Path(), resolveConfig)
 	}()
@@ -585,34 +603,57 @@ func (verb *benchmarkVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 
 	ctx = oldCtx
 	writeOutput := func() {
-		w := tabwriter.NewWriter(os.Stdout, 4, 4, 3, ' ', 0)
-		fmt.Fprintln(w, "Trace Time\tTrace Size\tTrace Frames\tState Serialization\tTrace Frame Time\tInteractive")
-		fmt.Fprintln(w, "----------\t----------\t------------\t-------------------\t----------------\t-----------")
-		fmt.Fprintf(w, "%v\t%v\t%v\t%v\t%v\t%v\n",
-			verb.traceDoneTime.Sub(verb.beforeStartTraceTime),
-			verb.traceSizeInBytes,
-			verb.traceFrames,
-			time.Duration(stateTime)*time.Nanosecond,
-			time.Duration(frameTime)*time.Nanosecond,
-			verb.gapisInteractiveTime.Sub(verb.traceDoneTime),
-		)
-		w.Flush()
 		preMecFramerate := float64(stateBuildStartTime - traceStartTimestamp)
 		if verb.StartFrame > 0 {
 			preMecFramerate = preMecFramerate / float64(verb.StartFrame)
 		}
-		fmt.Fprintln(os.Stdout, "")
-		w = tabwriter.NewWriter(os.Stdout, 4, 4, 3, ' ', 0)
-		fmt.Fprintln(w, "Caching Done\tInteraction\tMax Memory\tBefore MEC Frame Time\tTrailing Frame Time")
-		fmt.Fprintln(w, "------------\t-----------\t----------\t---------------------\t-----------------")
-		fmt.Fprintf(w, "%+v\t%+v\t%+v\t%+v\t%+v\n",
-			verb.gapisCachingDoneTime.Sub(verb.traceDoneTime),
-			verb.interactionDoneTime.Sub(verb.interactionStartTime),
-			traceMaxMemory,
-			time.Duration(preMecFramerate)*time.Nanosecond,
-			time.Duration(nonLoadingFrameTime)*time.Nanosecond,
-		)
-		w.Flush()
+		if verb.OutputCSV {
+			csvWriter := csv.NewWriter(os.Stdout)
+			header := []string{
+				"Trace Time (ms)", "Trace Size", "Trace Frames", "State Serialization (ms)", "Trace Frame Time (ms)", "Interactive (ms)",
+				"Caching Done (ms)", "Interaction (ms)", "Max Memory", "Before MEC Frame Time (ms)", "Trailing Frame Time (ms)"}
+			csvWriter.Write(header)
+			record := []string{
+				fmt.Sprint(float64(verb.traceDoneTime.Sub(verb.beforeStartTraceTime).Nanoseconds()) / float64(time.Millisecond)),
+				fmt.Sprint(verb.traceSizeInBytes),
+				fmt.Sprint(verb.traceFrames),
+				fmt.Sprint(stateTime / float64(time.Millisecond)),
+				fmt.Sprint(frameTime / float64(time.Millisecond)),
+				fmt.Sprint(float64(verb.gapisInteractiveTime.Sub(verb.traceDoneTime).Nanoseconds()) / float64(time.Millisecond)),
+				fmt.Sprint(float64(verb.gapisCachingDoneTime.Sub(verb.traceDoneTime).Nanoseconds()) / float64(time.Millisecond)),
+				fmt.Sprint(float64(verb.interactionDoneTime.Sub(verb.interactionStartTime).Nanoseconds()) / float64(time.Millisecond)),
+				fmt.Sprint(traceMaxMemory),
+				fmt.Sprint(preMecFramerate / float64(time.Millisecond)),
+				fmt.Sprint(float64(nonLoadingFrameTime) / float64(time.Millisecond)),
+			}
+			csvWriter.Write(record)
+			csvWriter.Flush()
+		} else {
+			w := tabwriter.NewWriter(os.Stdout, 4, 4, 3, ' ', 0)
+			fmt.Fprintln(w, "Trace Time\tTrace Size\tTrace Frames\tState Serialization\tTrace Frame Time\tInteractive")
+			fmt.Fprintln(w, "----------\t----------\t------------\t-------------------\t----------------\t-----------")
+			fmt.Fprintf(w, "%v\t%v\t%v\t%v\t%v\t%v\n",
+				verb.traceDoneTime.Sub(verb.beforeStartTraceTime),
+				verb.traceSizeInBytes,
+				verb.traceFrames,
+				time.Duration(stateTime)*time.Nanosecond,
+				time.Duration(frameTime)*time.Nanosecond,
+				verb.gapisInteractiveTime.Sub(verb.traceDoneTime),
+			)
+			w.Flush()
+			fmt.Fprintln(os.Stdout, "")
+			w = tabwriter.NewWriter(os.Stdout, 4, 4, 3, ' ', 0)
+			fmt.Fprintln(w, "Caching Done\tInteraction\tMax Memory\tBefore MEC Frame Time\tTrailing Frame Time")
+			fmt.Fprintln(w, "------------\t-----------\t----------\t---------------------\t-----------------")
+			fmt.Fprintf(w, "%+v\t%+v\t%+v\t%+v\t%+v\n",
+				verb.gapisCachingDoneTime.Sub(verb.traceDoneTime),
+				verb.interactionDoneTime.Sub(verb.interactionStartTime),
+				traceMaxMemory,
+				time.Duration(preMecFramerate)*time.Nanosecond,
+				time.Duration(nonLoadingFrameTime)*time.Nanosecond,
+			)
+			w.Flush()
+		}
 	}
 
 	writeTrace = func(path string, gapisTrace, gapitTrace *bytes.Buffer) error {
@@ -877,7 +918,7 @@ func (verb *benchmarkVerb) doTrace(ctx context.Context, client client.Client, tr
 	case "vulkan":
 		options.Apis = []string{"Vulkan"}
 	case "gles":
-		options.Apis = []string{"OpenGLES", "GVR"}
+		options.Apis = []string{"OpenGLES"}
 	case "":
 		return fmt.Errorf("Please specify one of vulkan or gles for an api")
 	default:
@@ -888,20 +929,20 @@ func (verb *benchmarkVerb) doTrace(ctx context.Context, client client.Client, tr
 	if err != nil {
 		return err
 	}
-	defer handler.Dispose()
+	defer handler.Dispose(ctx)
 
 	defer app.AddInterruptHandler(func() {
-		handler.Dispose()
+		handler.Dispose(ctx)
 	})()
 
-	status, err := handler.Initialize(options)
+	status, err := handler.Initialize(ctx, options)
 	if err != nil {
 		return err
 	}
 	verb.traceInitializedTime = time.Now()
 
 	return task.Retry(ctx, 0, time.Second*3, func(ctx context.Context) (retry bool, err error) {
-		status, err = handler.Event(service.TraceEvent_Status)
+		status, err = handler.Event(ctx, service.TraceEvent_Status)
 		if err == io.EOF {
 			return true, nil
 		}

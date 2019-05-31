@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/google/gapid/core/app"
 	"github.com/google/gapid/core/event/task"
 	"github.com/google/gapid/core/os/device/bind"
 	gapii "github.com/google/gapid/gapii/client"
@@ -42,8 +43,10 @@ type Process interface {
 	// Capture connects to this trace and waits for a capture to be delivered.
 	// It copies the capture into the supplied writer.
 	// If the process was started with the DeferStart flag, then tracing will wait
-	// until s is fired.
-	Capture(ctx context.Context, s task.Signal, w io.Writer, written *int64) (size int64, err error)
+	// until start is fired.
+	// Capturing will stop when the stop signal is fired (clean stop) or the
+	// context is cancelled (abort).
+	Capture(ctx context.Context, start task.Signal, stop task.Signal, w io.Writer, written *int64) (size int64, err error)
 }
 
 // Tracer is an option interface that a bind.Device can implement.
@@ -61,7 +64,7 @@ type Tracer interface {
 	// SetupTrace starts the application on the device, and causes it to wait
 	// for the trace to be started. It returns the process that was created, as
 	// well as a function that can be used to clean up the device
-	SetupTrace(ctx context.Context, o *service.TraceOptions) (Process, func(), error)
+	SetupTrace(ctx context.Context, o *service.TraceOptions) (Process, app.Cleanup, error)
 
 	// GetDevice returns the device associated with this tracer
 	GetDevice() bind.Device

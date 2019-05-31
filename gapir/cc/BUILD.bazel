@@ -57,7 +57,12 @@ mm_library(
         ":gles_h",
         ":vulkan_h",
     ],
-    copts = cc_copts(),
+    copts = cc_copts() + [
+        # Avoid OpenGL deprecation error.
+        "-DGL_SILENCE_DEPRECATION",
+        # Avoid NSOpenGLContext.setView deprecation error.
+        "-Wno-deprecated-declarations",
+    ],
     deps = [
         "//core/cc",
     ],
@@ -77,7 +82,10 @@ cc_library(
         "//tools/build:darwin": glob(["osx/*.cpp"]),
         "//tools/build:windows": glob(["windows/*.cpp"]),
         # Android
-        "//conditions:default": glob(["android/*.cpp"]),
+        "//conditions:default": glob([
+            "android/*.cpp",
+            "android/*.h",
+        ]),
     }) + [
         ":gles_cc",
         ":gles_h",

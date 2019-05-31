@@ -25,6 +25,7 @@
 #endif
 
 #include <google/protobuf/util/json_util.h>
+#include "core/cc/log.h"
 #include "core/os/device/device.pb.h"
 #include "core/os/device/deviceinfo/cc/instance.h"
 
@@ -50,7 +51,7 @@ int main(int argc, char const *argv[]) {
     }
   }
 
-  device_instance instance = get_device_instance(nullptr);
+  device_instance instance = get_device_instance();
   if (output_binary) {
 #if _WIN32
     _setmode(_fileno(stdout), _O_BINARY);
@@ -60,7 +61,7 @@ int main(int argc, char const *argv[]) {
   } else {
     device::Instance device_inst;
     if (!device_inst.ParseFromArray(instance.data, instance.size)) {
-      std::cerr << "Internal error." << std::endl;
+      GAPID_ERROR("Internal error");
       free_device_instance(instance);
       return -1;
     }
@@ -70,7 +71,7 @@ int main(int argc, char const *argv[]) {
     if (google::protobuf::util::Status::OK !=
         google::protobuf::util::MessageToJsonString(device_inst, &output,
                                                     options)) {
-      std::cerr << "Internal error: Could not convert to json" << std::endl;
+      GAPID_ERROR("Internal error: Could not convert to json");
       free_device_instance(instance);
       return -1;
     }

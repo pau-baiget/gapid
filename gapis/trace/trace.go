@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/gapid/core/app"
 	"github.com/google/gapid/core/event/task"
 	"github.com/google/gapid/core/log"
 	gapii "github.com/google/gapid/gapii/client"
@@ -28,10 +29,10 @@ import (
 	"github.com/google/gapid/gapis/trace/tracer"
 )
 
-func Trace(ctx context.Context, device *path.Device, start task.Signal, options *service.TraceOptions, written *int64) error {
+func Trace(ctx context.Context, device *path.Device, start task.Signal, stop task.Signal, options *service.TraceOptions, written *int64) error {
 	gapiiOpts := tracer.GapiiOptions(options)
 	var process tracer.Process
-	cleanup := func() {}
+	var cleanup app.Cleanup
 	mgr := GetManager(ctx)
 	if device == nil {
 		return log.Errf(ctx, nil, "Invalid device path")
@@ -43,6 +44,10 @@ func Trace(ctx context.Context, device *path.Device, start task.Signal, options 
 	config, err := tracer.TraceConfiguration(ctx)
 	if err != nil {
 		return err
+	}
+
+	if !isSupported(config, options) {
+		return log.Errf(ctx, nil, "Cannot take the requested type of trace on this device")
 	}
 
 	if port := options.GetPort(); port != 0 {
@@ -57,7 +62,7 @@ func Trace(ctx context.Context, device *path.Device, start task.Signal, options 
 	if err != nil {
 		return log.Errf(ctx, err, "Could not start trace")
 	}
-	defer cleanup()
+	defer cleanup.Invoke(ctx)
 
 	os.MkdirAll(filepath.Dir(options.ServerLocalSavePath), 0755)
 	file, err := os.Create(options.ServerLocalSavePath)
@@ -71,7 +76,7 @@ func Trace(ctx context.Context, device *path.Device, start task.Signal, options 
 		ctx, _ = task.WithTimeout(ctx, time.Duration(options.Duration)*time.Second)
 	}
 
-	_, err = process.Capture(ctx, start, file, written)
+	_, err = process.Capture(ctx, start, stop, file, written)
 	return err
 }
 
@@ -83,4 +88,20 @@ func TraceConfiguration(ctx context.Context, device *path.Device) (*service.Devi
 	}
 
 	return tracer.TraceConfiguration(ctx)
+}
+
+func isSupported(config *service.DeviceTraceConfiguration, options *service.TraceOptions) bool {
+	numApis := len(options.Apis)
+
+	// We don't support tracing more than one API at this time.
+	if numApis > 1 {
+		return false
+	}
+
+	for _, c := range config.Apis {
+		if c.Type == options.Type && (numApis < 1 || options.Apis[0] == c.Api) {
+			return true
+		}
+	}
+	return false
 }

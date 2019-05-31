@@ -47,6 +47,7 @@ import (
 	"github.com/google/gapid/gapis/capture"
 	"github.com/google/gapid/gapis/config"
 	"github.com/google/gapid/gapis/messages"
+	perfetto "github.com/google/gapid/gapis/perfetto/service"
 	"github.com/google/gapid/gapis/replay"
 	"github.com/google/gapid/gapis/replay/devices"
 	"github.com/google/gapid/gapis/resolve"
@@ -486,6 +487,9 @@ type statusListener struct {
 }
 
 func (l *statusListener) OnTaskStart(ctx context.Context, task *status.Task) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
+
 	l.f(&service.TaskUpdate{
 		Status:          service.TaskStatus_STARTING,
 		Id:              task.ID(),
@@ -494,8 +498,6 @@ func (l *statusListener) OnTaskStart(ctx context.Context, task *status.Task) {
 		CompletePercent: 0,
 		Background:      task.Background(),
 	})
-	l.progressMutex.Lock()
-	defer l.progressMutex.Unlock()
 	l.lastProgressUpdate[task] = time.Now()
 }
 
@@ -518,6 +520,9 @@ func (l *statusListener) OnTaskProgress(ctx context.Context, task *status.Task) 
 }
 
 func (l *statusListener) OnTaskBlock(ctx context.Context, task *status.Task) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
+
 	l.f(&service.TaskUpdate{
 		Status:          service.TaskStatus_BLOCKED,
 		Id:              task.ID(),
@@ -529,6 +534,9 @@ func (l *statusListener) OnTaskBlock(ctx context.Context, task *status.Task) {
 }
 
 func (l *statusListener) OnTaskUnblock(ctx context.Context, task *status.Task) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
+
 	l.f(&service.TaskUpdate{
 		Status:          service.TaskStatus_UNBLOCKED,
 		Id:              task.ID(),
@@ -540,6 +548,8 @@ func (l *statusListener) OnTaskUnblock(ctx context.Context, task *status.Task) {
 }
 
 func (l *statusListener) OnTaskFinish(ctx context.Context, task *status.Task) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
 
 	l.f(&service.TaskUpdate{
 		Status:          service.TaskStatus_FINISHED,
@@ -549,12 +559,14 @@ func (l *statusListener) OnTaskFinish(ctx context.Context, task *status.Task) {
 		CompletePercent: 100,
 		Background:      task.Background(),
 	})
-	l.progressMutex.Lock()
-	defer l.progressMutex.Unlock()
 	delete(l.lastProgressUpdate, task)
+
 }
 
 func (l *statusListener) OnEvent(ctx context.Context, task *status.Task, event string, scope status.EventScope) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
+
 	if task != nil {
 		l.f(&service.TaskUpdate{
 			Status:          service.TaskStatus_EVENT,
@@ -579,41 +591,37 @@ func (l *statusListener) OnEvent(ctx context.Context, task *status.Task, event s
 }
 
 func (l *statusListener) OnMemorySnapshot(ctx context.Context, stats runtime.MemStats) {
+	l.progressMutex.Lock()
+	defer l.progressMutex.Unlock()
+
 	l.m(&service.MemoryStatus{
 		TotalHeap: stats.Alloc,
 	})
 }
 
-func (s *server) Status(
-	ctx context.Context,
-	snapshotInterval time.Duration,
-	statusUpdateFrequency time.Duration,
-	f func(*service.TaskUpdate),
-	m func(*service.MemoryStatus)) (func() error, error) {
-	l := &statusListener{f, m, make(map[*status.Task]time.Time), statusUpdateFrequency, sync.Mutex{}}
+func (s *server) Status(ctx context.Context, snapshotInterval, statusInterval time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus)) error {
+	ctx = status.StartBackground(ctx, "RPC Status")
+	defer status.Finish(ctx)
+	ctx = log.Enter(ctx, "Status")
+	l := &statusListener{f, m, make(map[*status.Task]time.Time), statusInterval, sync.Mutex{}}
 	unregister := status.RegisterListener(l)
-	stop := func() error {
-		unregister()
-		return nil
-	}
+	defer unregister()
 
 	if snapshotInterval > 0 {
 		// Poll the memory. This will block until the context is cancelled.
-		msi := time.Second * time.Duration(snapshotInterval)
 		stopSnapshot := task.Async(ctx, func(ctx context.Context) error {
-			return task.Poll(ctx, msi, func(ctx context.Context) error {
+			return task.Poll(ctx, snapshotInterval, func(ctx context.Context) error {
 				status.SnapshotMemory(ctx)
 				return nil
 			})
 		})
-		oldStop := stop
-		stop = func() error {
-			oldStop()
-			stopSnapshot()
-			return nil
-		}
+		defer stopSnapshot()
 	}
-	return stop, nil
+
+	select {
+	case <-task.ShouldStop(ctx):
+	}
+	return task.StopReason(ctx)
 }
 
 func (s *server) GetPerformanceCounters(ctx context.Context) (string, error) {
@@ -687,28 +695,29 @@ func (s *server) FindTraceTargets(ctx context.Context, req *service.FindTraceTar
 // traceHandler implements the TraceHandler interface
 // It wraps all of the state for a trace operation
 type traceHandler struct {
-	ctx            context.Context
-	initialized    bool               // Has the trace been initialized yet
-	started        bool               // Has the trace been started yet
-	done           bool               // Has the trace been finished
-	err            error              // Was there an error to report at next request
-	bytesWritten   int64              // How many bytes have been written so far
-	startSignal    task.Signal        // If we are in MEC this signal will start the trace
-	startFunc      task.Task          // This is the function to go with the above signal.
-	stopFunc       context.CancelFunc // stopFunc can be used to stop/clean up the trace
-	doneSignal     task.Signal        // doneSignal can be waited on to make sure the trace is actually done
-	doneSignalFunc task.Task          // doneSignalFunc is called when tracing finished normally
+	initialized    bool        // Has the trace been initialized yet
+	started        bool        // Has the trace been started yet
+	done           bool        // Has the trace been finished
+	err            error       // Was there an error to report at next request
+	bytesWritten   int64       // How many bytes have been written so far
+	startSignal    task.Signal // If we are in MEC this signal will start the trace
+	startFunc      task.Task   // This is the function to go with the above signal.
+	stopFunc       task.Task   // stopFunc can be used to stop/clean up the trace
+	doneSignal     task.Signal // doneSignal can be waited on to make sure the trace is actually done
+	doneSignalFunc task.Task   // doneSignalFunc is called when tracing finished normally
 }
 
-func (r *traceHandler) Initialize(opts *service.TraceOptions) (*service.StatusResponse, error) {
+func (r *traceHandler) Initialize(ctx context.Context, opts *service.TraceOptions) (*service.StatusResponse, error) {
 	if r.initialized {
-		return nil, log.Errf(r.ctx, nil, "Error initialize a running trace")
+		return nil, log.Errf(ctx, nil, "Error initialize a running trace")
 	}
 	r.initialized = true
+	stopSignal, stopFunc := task.NewSignal()
+	r.stopFunc = stopFunc
 	go func() {
-		r.err = trace.Trace(r.ctx, opts.Device, r.startSignal, opts, &r.bytesWritten)
+		r.err = trace.Trace(ctx, opts.Device, r.startSignal, stopSignal, opts, &r.bytesWritten)
 		r.done = true
-		r.doneSignalFunc(r.ctx)
+		r.doneSignalFunc(ctx)
 	}()
 
 	stat := service.TraceStatus_Initializing
@@ -724,27 +733,27 @@ func (r *traceHandler) Initialize(opts *service.TraceOptions) (*service.StatusRe
 	return resp, nil
 }
 
-func (r *traceHandler) Event(req service.TraceEvent) (*service.StatusResponse, error) {
+func (r *traceHandler) Event(ctx context.Context, req service.TraceEvent) (*service.StatusResponse, error) {
 	if !r.initialized {
-		return nil, log.Errf(r.ctx, nil, "Cannot get/change status of an uninitialized trace")
+		return nil, log.Errf(ctx, nil, "Cannot get/change status of an uninitialized trace")
 	}
 	if r.err != nil {
-		return nil, log.Errf(r.ctx, r.err, "Tracing Failed")
+		return nil, log.Errf(ctx, r.err, "Tracing Failed")
 	}
 
 	switch req {
 	case service.TraceEvent_Begin:
 		if r.started {
-			return nil, log.Errf(r.ctx, nil, "Invalid to start an already running trace")
+			return nil, log.Errf(ctx, nil, "Invalid to start an already running trace")
 		}
-		r.startFunc(r.ctx)
+		r.startFunc(ctx)
 		r.started = true
 	case service.TraceEvent_Stop:
 		if !r.started {
-			return nil, log.Errf(r.ctx, nil, "Cannot end a trace that was not started")
+			return nil, log.Errf(ctx, nil, "Cannot end a trace that was not started")
 		}
-		r.stopFunc()
-		r.doneSignal.Wait(r.ctx)
+		r.stopFunc(ctx)
+		r.doneSignal.Wait(ctx)
 	case service.TraceEvent_Status:
 		// intentionally empty
 	}
@@ -761,6 +770,7 @@ func (r *traceHandler) Event(req service.TraceEvent) (*service.StatusResponse, e
 	}
 
 	if r.started {
+		// TODO: this is not a good way to signal that we are ready to capture.
 		if bytes == 0 {
 			status = service.TraceStatus_Initializing
 		} else {
@@ -777,28 +787,23 @@ func (r *traceHandler) Event(req service.TraceEvent) (*service.StatusResponse, e
 	return resp, nil
 }
 
-func (r *traceHandler) Dispose() {
-	r.stopFunc()
+func (r *traceHandler) Dispose(ctx context.Context) {
+	if !r.done {
+		r.stopFunc(ctx)
+	}
 	return
 
 }
 
 func (s *server) Trace(ctx context.Context) (service.TraceHandler, error) {
 	startSignal, startFunc := task.NewSignal()
-	ctx, stop := context.WithCancel(ctx)
 	doneSignal, doneSigFunc := task.NewSignal()
 	return &traceHandler{
-		ctx,
-		false,
-		false,
-		false,
-		nil,
-		0,
-		startSignal,
-		startFunc,
-		stop,
-		doneSignal,
-		doneSigFunc,
+		startSignal:    startSignal,
+		startFunc:      startFunc,
+		doneSignal:     doneSignal,
+		doneSignalFunc: doneSigFunc,
+		stopFunc:       doneSigFunc,
 	}, nil
 }
 
@@ -829,4 +834,21 @@ func (s *server) GetTimestamps(ctx context.Context, c *path.Capture, d *path.Dev
 	defer status.Finish(ctx)
 	ctx = log.Enter(ctx, "GetTimestamps")
 	return replay.GetTimestamps(ctx, c, d)
+}
+
+func (s *server) PerfettoQuery(ctx context.Context, c *path.Capture, query string) (*perfetto.QueryResult, error) {
+	ctx = status.Start(ctx, "RPC PerfettoQuery")
+	defer status.Finish(ctx)
+
+	ctx = log.Enter(ctx, "PerfettoQuery")
+	p, err := capture.ResolvePerfettoFromPath(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := p.Processor.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }

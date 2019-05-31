@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -44,11 +45,15 @@ import (
 func (f CommandFilterFlags) commandFilter(ctx context.Context, client service.Service, p *path.Capture) (*path.CommandFilter, error) {
 	filter := &path.CommandFilter{}
 	if f.Context >= 0 {
-		contexts, err := client.Get(ctx, p.Contexts().Path(), nil)
+		boxedContexts, err := client.Get(ctx, p.Contexts().Path(), nil)
 		if err != nil {
 			return nil, log.Err(ctx, err, "Failed to load the contexts")
 		}
-		filter.Context = contexts.(*service.Contexts).List[f.Context].ID
+		contexts := boxedContexts.(*service.Contexts)
+		if n := len(contexts.List); f.Context >= n {
+			return nil, log.Errf(ctx, err, "Context %d is out of range [0..%d]", f.Context, n-1)
+		}
+		filter.Context = contexts.List[f.Context].ID
 	}
 	return filter, nil
 }
@@ -268,6 +273,10 @@ func getDevice(ctx context.Context, client client.Client, capture *path.Capture,
 		return selected, nil
 	}
 
+	if flags.NoFallback {
+		return nil, log.Err(ctx, nil, "Could not find the requested device.")
+	}
+
 	log.W(ctx, "No compatible devices found. Attempting to use the first device anyway...")
 
 	paths, err = client.GetDevices(ctx)
@@ -294,7 +303,7 @@ func getDesktopTraceDevice(ctx context.Context, flags GapiiFlags) (bind.Device, 
 			return nil, err
 		}
 
-		devices, err := remotessh.Devices(ctx, f)
+		devices, err := remotessh.Devices(ctx, []io.ReadCloser{f})
 		if err != nil {
 			return nil, err
 		}

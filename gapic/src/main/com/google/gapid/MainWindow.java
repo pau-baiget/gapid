@@ -37,12 +37,14 @@ import com.google.gapid.models.CommandStream;
 import com.google.gapid.models.CommandStream.CommandIndex;
 import com.google.gapid.models.Models;
 import com.google.gapid.models.Settings;
+import com.google.gapid.proto.service.Service;
 import com.google.gapid.proto.service.Service.ClientAction;
 import com.google.gapid.server.Client;
 import com.google.gapid.util.Loadable.Message;
 import com.google.gapid.util.MacApplication;
 import com.google.gapid.util.Messages;
 import com.google.gapid.util.OS;
+import com.google.gapid.util.StatusWatcher;
 import com.google.gapid.util.UpdateWatcher;
 import com.google.gapid.views.StatusBar;
 import com.google.gapid.widgets.CopyPaste;
@@ -58,6 +60,7 @@ import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.StackLayout;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.program.Program;
@@ -76,7 +79,7 @@ public class MainWindow extends ApplicationWindow {
   private final Theme theme;
   private Composite mainArea;
   private LoadingScreen loadingScreen;
-  private StatusBar statusBar;
+  protected StatusBar statusBar;
 
   public MainWindow(Settings settings, Theme theme) {
     super(null);
@@ -87,6 +90,10 @@ public class MainWindow extends ApplicationWindow {
     setBlockOnOpen(true);
   }
 
+  public StatusBar getStatusBar() {
+    return statusBar;
+  }
+
   public void showLoadingMessage(String status) {
     loadingScreen.setText(status);
   }
@@ -94,10 +101,11 @@ public class MainWindow extends ApplicationWindow {
   public void initMainUi(Client client, Models models, Widgets widgets) {
     Shell shell = getShell();
 
+    showLoadingMessage("Setting up UI...");
     initMenus(client, models, widgets);
 
-    LoadablePanel<GraphicsTraceView> mainUi = new LoadablePanel<GraphicsTraceView>(
-        mainArea, widgets, parent -> new GraphicsTraceView(parent, models, widgets));
+    LoadablePanel<MainViewContainer> mainUi = new LoadablePanel<MainViewContainer>(
+        mainArea, widgets, parent -> new MainViewContainer(parent, models, widgets));
     models.capture.addListener(new Capture.Listener() {
       @Override
       public void onCaptureLoadingStart(boolean maintainState) {
@@ -111,9 +119,11 @@ public class MainWindow extends ApplicationWindow {
         if (error != null) {
           mainUi.showMessage(error);
         } else {
+          MainView view = mainUi.getContents().updateAndGet(
+              models.capture.getData().capture.getType());
+          view.updateViewMenu(findMenu(MenuItems.VIEW_ID));
+          getMenuBarManager().updateAll(true);
           mainUi.stopLoading();
-          mainUi.getContents().updateViewMenu(findMenu(MenuItems.VIEW_ID));
-          getMenuBarManager().update(true);
         }
       }
     });
@@ -125,7 +135,15 @@ public class MainWindow extends ApplicationWindow {
           file -> models.capture.loadCapture(new File(file)));
     }
 
+    if (settings.autoCheckForUpdates) {
+      // Only show the status message if we're actually checking for updates. watchForUpdates only
+      //schedules a periodic check to see if we should check for updates and if so, checks.
+      showLoadingMessage("Watching for updates...");
+    }
     watchForUpdates(client, models);
+
+    showLoadingMessage("Tracking server status...");
+    trackServerStatus(client);
 
     showLoadingMessage("Ready! Please open or capture a trace file.");
   }
@@ -137,6 +155,20 @@ public class MainWindow extends ApplicationWindow {
           Program.launch(release.getBrowserUrl());
         });
       });
+    });
+  }
+
+  private void trackServerStatus(Client client) {
+    new StatusWatcher(client, new StatusWatcher.Listener() {
+      @Override
+      public void onStatus(String status) {
+        scheduleIfNotDisposed(statusBar, () -> statusBar.setServerStatus(status));
+      }
+
+      @Override
+      public void onHeap(long heap) {
+        scheduleIfNotDisposed(statusBar, () -> statusBar.setServerHeapSize(heap));
+      }
     });
   }
 
@@ -160,7 +192,7 @@ public class MainWindow extends ApplicationWindow {
     loadingScreen = new LoadingScreen(mainArea, theme);
     setTopControl(loadingScreen);
 
-    statusBar = new StatusBar(parent);
+    statusBar = new StatusBar(parent, theme);
     statusBar.setLayoutData(new GridData(SWT.FILL, SWT.BOTTOM, true, false));
     return parent;
   }
@@ -213,7 +245,7 @@ public class MainWindow extends ApplicationWindow {
     manager.add(createGotoMenu(models));
     manager.add(createViewMenu());
     manager.add(createHelpMenu(client, models, widgets));
-    manager.update(true);
+    manager.updateAll(true);
   }
 
   protected MenuManager findMenu(String id) {
@@ -324,6 +356,45 @@ public class MainWindow extends ApplicationWindow {
     return manager;
   }
 
+  private static class MainViewContainer extends Composite {
+    private final Models models;
+    private final Widgets widgets;
+
+    private Service.TraceType current;
+    private MainView view;
+
+    public MainViewContainer(Composite parent, Models models, Widgets widgets) {
+      super(parent, SWT.NONE);
+      this.models = models;
+      this.widgets = widgets;
+
+      setLayout(new FillLayout());
+    }
+
+    public MainView updateAndGet(Service.TraceType traceType) {
+      if (traceType == current) {
+        return view;
+      }
+      if (view != null) {
+        ((Control)view).dispose();
+      }
+
+      current = traceType;
+      switch (traceType) {
+        case Graphics:
+          view = new GraphicsTraceView(this, models, widgets);
+          break;
+        case Perfetto:
+          view = new PerfettoTraceView(this, models, widgets);
+          break;
+        default:
+          throw new AssertionError("Trace type not supported: " + traceType);
+      }
+      layout();
+      return view;
+    }
+  }
+
   /**
    * The menu items shown in the main application window menus.
    */
@@ -342,6 +413,7 @@ public class MainWindow extends ApplicationWindow {
     ViewThumbnails("Show Filmstrip"),
     ViewLeft("Show Left Tabs"),
     ViewRight("Show Right Tabs"),
+    ViewDarkMode("Dark Mode", 'D'),
 
     HelpOnlineHelp("&Online Help\tF1", SWT.F1),
     HelpAbout("&About"),
@@ -391,5 +463,12 @@ public class MainWindow extends ApplicationWindow {
       action.setAccelerator(accelerator);
       return action;
     }
+  }
+
+  /**
+   * Main view shown once a trace is loaded.
+   */
+  public static interface MainView {
+    public void updateViewMenu(MenuManager manager);
   }
 }

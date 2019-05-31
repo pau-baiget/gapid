@@ -59,8 +59,12 @@ public interface GapidClient {
       Service.TraceTargetTreeNodeRequest request);
   public ListenableFuture<Service.UpdateSettingsResponse> updateSettings(
       Service.UpdateSettingsRequest request);
+  public ListenableFuture<Service.PerfettoQueryResponse> perfettoQuery(
+      Service.PerfettoQueryRequest request);
 
   public ListenableFuture<Void> streamLog(Consumer<Log.Message> onLogMessage);
+  public ListenableFuture<Void> streamStatus(
+      Service.ServerStatusRequest request, Consumer<Service.ServerStatusResponse> onStatus);
   public ListenableFuture<Void> streamSearch(
       Service.FindRequest request, Consumer<Service.FindResponse> onResult);
   public StreamSender<Service.TraceRequest> streamTrace(

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/gapid/core/app"
 	"github.com/google/gapid/core/log"
 	"github.com/google/gapid/core/os/android"
 	"github.com/google/gapid/core/os/android/adb"
@@ -36,6 +37,7 @@ import (
 	"github.com/google/gapid/gapidapk"
 	"github.com/google/gapid/gapidapk/pkginfo"
 	gapii "github.com/google/gapid/gapii/client"
+	perfetto "github.com/google/gapid/gapis/perfetto/android"
 	"github.com/google/gapid/gapis/service"
 	"github.com/google/gapid/gapis/trace/tracer"
 )
@@ -95,12 +97,15 @@ func NewTracer(dev bind.Device) tracer.Tracer {
 
 // TraceConfiguration returns the device's supported trace configuration.
 func (t *androidTracer) TraceConfiguration(ctx context.Context) (*service.DeviceTraceConfiguration, error) {
-	apis := make([]*service.DeviceAPITraceConfiguration, 0, 2)
+	apis := make([]*service.TraceTypeCapabilities, 0, 3)
 	if t.b.Instance().GetConfiguration().GetDrivers().GetOpengl().GetVersion() != "" {
 		apis = append(apis, tracer.GLESTraceOptions())
 	}
 	if len(t.b.Instance().GetConfiguration().GetDrivers().GetVulkan().GetPhysicalDevices()) > 0 {
 		apis = append(apis, tracer.VulkanTraceOptions())
+	}
+	if t.b.Instance().SupportsPerfetto() {
+		apis = append(apis, tracer.PerfettoTraceOptions())
 	}
 
 	return &service.DeviceTraceConfiguration{
@@ -247,7 +252,7 @@ func findBestAction(l []*pkginfo.Action) *pkginfo.Action {
 // If it is a zip file that contains an apk and an obb file
 // then we install them seperately.
 // Returns a function used to clean up the package and obb
-func (t *androidTracer) InstallPackage(ctx context.Context, o *service.TraceOptions) (*android.InstalledPackage, func(), error) {
+func (t *androidTracer) InstallPackage(ctx context.Context, o *service.TraceOptions) (*android.InstalledPackage, app.Cleanup, error) {
 	tempDir, err := ioutil.TempDir("", "")
 	if err != nil {
 		return nil, nil, err
@@ -328,13 +333,13 @@ func (t *androidTracer) InstallPackage(ctx context.Context, o *service.TraceOpti
 		VersionCode: int(info.VersionCode),
 		VersionName: info.VersionName,
 	}
-	cleanup := func() {}
+	var cleanup app.Cleanup
 	if obbName != "" {
 		if err := pkg.PushOBB(ctx, obbName); err != nil {
 			pkg.Uninstall(ctx)
 			return nil, nil, log.Err(ctx, err, "Pushing OBB failed")
 		}
-		cleanup = func() {
+		cleanup = func(ctx context.Context) {
 			pkg.Uninstall(ctx)
 			pkg.RemoveOBB(ctx)
 		}
@@ -342,9 +347,13 @@ func (t *androidTracer) InstallPackage(ctx context.Context, o *service.TraceOpti
 			log.W(ctx, "Failed to grant OBB read/write permission, (app likely already has them). Ignoring: %s", err)
 		}
 	} else {
-		cleanup = func() {
+		cleanup = func(ctx context.Context) {
 			pkg.Uninstall(ctx)
 		}
+	}
+
+	o.App = &service.TraceOptions_Uri{
+		Uri: info.URI(),
 	}
 	return pkg, cleanup, nil
 }
@@ -392,16 +401,15 @@ func (t *androidTracer) FindTraceTargets(ctx context.Context, str string) ([]*tr
 	return nodes, nil
 }
 
-func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions) (tracer.Process, func(), error) {
+func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions) (tracer.Process, app.Cleanup, error) {
 	var err error
-	cleanup := func() {}
+	var cleanup app.Cleanup
 	var pkg *android.InstalledPackage
 	var a *android.ActivityAction
 	ret := &gapii.Process{}
 	if len(o.GetUploadApplication()) > 0 {
 		pkg, cleanup, err = t.InstallPackage(ctx, o)
 		if err != nil {
-			cleanup()
 			return ret, nil, err
 		}
 	}
@@ -413,8 +421,7 @@ func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions)
 	if len(match) == 3 {
 		process, err := gapii.Connect(ctx, t.b, device.ABIByName(match[2]), match[1], tracer.GapiiOptions(o))
 		if err != nil {
-			cleanup()
-			return ret, nil, err
+			return ret, cleanup.Invoke(ctx), err
 		}
 		return process, cleanup, nil
 	}
@@ -424,17 +431,13 @@ func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions)
 	match = re.FindStringSubmatch(o.GetUri())
 
 	if len(match) == 4 {
-		if err != nil {
-			return ret, nil, err
-		}
 		packages, err := t.b.InstalledPackages(ctx)
 		if err != nil {
 			return ret, nil, err
 		}
 		pkg = packages.FindByName(match[2])
 		if pkg == nil {
-			cleanup()
-			return ret, nil, fmt.Errorf("Package '%v' not found", match[2])
+			return ret, cleanup.Invoke(ctx), fmt.Errorf("Package '%v' not found", match[2])
 		}
 		a = pkg.ActivityActions.FindByName(match[1], match[3])
 		if a == nil {
@@ -442,49 +445,52 @@ func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions)
 			for i, a := range pkg.ActivityActions {
 				lines[i] = a.String()
 			}
-			cleanup()
-			return ret, nil, fmt.Errorf("Action '%v:%v' not found. All package actions:\n  %v",
+			return ret, cleanup.Invoke(ctx), fmt.Errorf("Action '%v:%v' not found. All package actions:\n  %v",
 				match[1], match[3],
 				strings.Join(lines, "\n  "))
 		}
-	} else {
+	} else if o.Type != service.TraceType_Perfetto || len(o.GetUri()) != 0 {
 		return ret, nil, fmt.Errorf("Could not find package matching %s", o.GetUri())
 	}
 
-	if !pkg.Debuggable {
-		err = t.b.Root(ctx)
-		switch err {
-		case nil:
-		case adb.ErrDeviceNotRooted:
-			cleanup()
-			return ret, nil, err
-		default:
-			cleanup()
-			return ret, nil, fmt.Errorf("Failed to restart ADB as root: %v", err)
+	if pkg != nil {
+		if !pkg.Debuggable {
+			err = t.b.Root(ctx)
+			switch err {
+			case nil:
+			case adb.ErrDeviceNotRooted:
+				return ret, cleanup.Invoke(ctx), err
+			default:
+				return ret, cleanup.Invoke(ctx), fmt.Errorf("Failed to restart ADB as root: %v", err)
+			}
+			log.I(ctx, "Device is rooted")
 		}
-		log.I(ctx, "Device is rooted")
-	}
 
-	if o.ClearCache {
-		log.I(ctx, "Clearing package cache")
-		if err := pkg.ClearCache(ctx); err != nil {
-			return ret, nil, err
+		if o.ClearCache {
+			log.I(ctx, "Clearing package cache")
+			if err := pkg.ClearCache(ctx); err != nil {
+				return ret, nil, err
+			}
 		}
 	}
 
 	if wasScreenOn, _ := t.b.IsScreenOn(ctx); !wasScreenOn {
-		oldcleanup := cleanup
-		cleanup = func() {
-			oldcleanup()
+		cleanup = cleanup.Then(func(ctx context.Context) {
 			t.b.TurnScreenOff(ctx)
-		}
-	}
-	log.I(ctx, "Starting with options %+v", tracer.GapiiOptions(o))
-	process, err := gapii.Start(ctx, pkg, a, tracer.GapiiOptions(o))
-	if err != nil {
-		cleanup()
-		return ret, nil, err
+		})
 	}
 
+	var process tracer.Process
+	if o.Type == service.TraceType_Perfetto {
+		process, err = perfetto.Start(ctx, t.b, a, o)
+	} else {
+		log.I(ctx, "Starting with options %+v", tracer.GapiiOptions(o))
+		var gapiiCleanup app.Cleanup
+		process, gapiiCleanup, err = gapii.Start(ctx, pkg, a, tracer.GapiiOptions(o))
+		cleanup = cleanup.Then(gapiiCleanup)
+	}
+	if err != nil {
+		return ret, cleanup.Invoke(ctx), err
+	}
 	return process, cleanup, nil
 }

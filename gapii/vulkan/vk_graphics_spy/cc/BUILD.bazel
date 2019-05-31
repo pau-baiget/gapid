@@ -29,16 +29,19 @@ cc_library(
         "//tools/build:darwin": [],
         "//tools/build:windows": [],
         # Android.
-        "//conditions:default": ["-ldl"],
+        "//conditions:default": [
+            "-ldl",
+            "-llog",
+        ],
     }),
     visibility = ["//visibility:public"],
     deps = ["//core/vulkan/cc/include/vulkan"],
 )
 
 android_dynamic_library(
-    name = "libVkLayerGraphicsSpy",
+    name = "libVkLayer_GraphicsSpy",
     visibility = ["//visibility:public"],
-    exports = "vk_graphics_spy.exports",
+    exports = "graphics_spy.exports",
     deps = [":cc"],
 )
 

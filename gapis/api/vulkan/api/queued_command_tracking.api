@@ -124,7 +124,7 @@ sub void execPendingCommands(VkQueue queue, bool isRoot) {
             // and preinitialized images, we also create individual pool here.
             // TODO: Redirect to bound memories for the data of linear preinitialized
             // images.
-            for _, _, aspectBit in unpackImageAspectFlags(image.ImageAspect) {
+            for _, _, aspectBit in unpackImageAspectFlags(image, image.ImageAspect) {
               aspect := image.Aspects[aspectBit]
               for lay in (0 .. image.Info.ArrayLayers) {
                 for lev in (0 .. image.Info.MipLevels) {
@@ -163,7 +163,7 @@ sub void execPendingCommands(VkQueue queue, bool isRoot) {
             // and preinitialized images, we also create individual pool here.
             // TODO: Redirect to bound memories for the data of linear preinitialized
             // images.
-            for _, _, aspectBit in unpackImageAspectFlags(image.ImageAspect) {
+            for _, _, aspectBit in unpackImageAspectFlags(image, image.ImageAspect) {
               aspect := image.Aspects[aspectBit]
               for lay in (0 .. image.Info.ArrayLayers) {
                 for lev in (0 .. image.Info.MipLevels) {
@@ -314,6 +314,14 @@ sub void callCommand(ref!CommandReference reference) {
       dovkCmdDebugMarkerEndEXT(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDebugMarkerEndEXT[reference.MapIndex])
     case cmd_vkCmdDebugMarkerInsertEXT:
       dovkCmdDebugMarkerInsertEXT(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDebugMarkerInsertEXT[reference.MapIndex])
+    case cmd_vkCmdDrawIndirectCountKHR:
+      dovkCmdDrawIndirectCountKHR(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDrawIndirectCountKHR[reference.MapIndex])
+    case cmd_vkCmdDrawIndexedIndirectCountKHR:
+      dovkCmdDrawIndexedIndirectCountKHR(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDrawIndexedIndirectCountKHR[reference.MapIndex])
+    case cmd_vkCmdDrawIndirectCountAMD:
+      dovkCmdDrawIndirectCountAMD(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDrawIndirectCountAMD[reference.MapIndex])
+    case cmd_vkCmdDrawIndexedIndirectCountAMD:
+      dovkCmdDrawIndexedIndirectCountAMD(CommandBuffers[reference.Buffer].BufferCommands.vkCmdDrawIndexedIndirectCountAMD[reference.MapIndex])
     default:
       vkErrorInvalidCommandBuffer(reference.Buffer)
   }

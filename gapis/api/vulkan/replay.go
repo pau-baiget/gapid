@@ -41,6 +41,7 @@ var (
 	_ = replay.QueryFramebufferAttachment(API{})
 	_ = replay.Support(API{})
 	_ = replay.QueryTimestamps(API{})
+	_ = replay.Profiler(API{})
 )
 
 // GetReplayPriority returns a uint32 representing the preference for
@@ -302,17 +303,17 @@ func buildReplayEnumeratePhysicalDevices(
 
 // dropInvalidDestroy is a transformation that drops all VkDestroyXXX commands
 // whose destroying targets are not recorded in the state.
-type dropInvalidDestroy struct{}
+type dropInvalidDestroy struct{ tag string }
 
 func (t *dropInvalidDestroy) Transform(ctx context.Context, id api.CmdID, cmd api.Cmd, out transform.Writer) {
 	s := out.State()
 	l := s.MemoryLayout
 	cb := CommandBuilder{Thread: cmd.Thread(), Arena: s.Arena}
 	warnDropCmd := func(handles ...interface{}) {
-		log.W(ctx, "Dropping [%d]:%v because the creation of %v was not recorded", id, cmd, handles)
+		log.W(ctx, "[%v] Dropping [%d]:%v because the creation of %v was not recorded", t.tag, id, cmd, handles)
 	}
 	warnModCmd := func(handles ...interface{}) {
-		log.W(ctx, "Modifing [%d]:%v to remove the reference to %v because the creation of them were not recorded", id, cmd, handles)
+		log.W(ctx, "[%v] Modifing [%d]:%v to remove the reference to %v because the creation of them were not recorded", t.tag, id, cmd, handles)
 	}
 	switch cmd := cmd.(type) {
 	case *VkDestroyInstance:
@@ -542,6 +543,11 @@ func (t *destroyResourcesAtEOS) Flush(ctx context.Context, out transform.Writer)
 		out.MutateAndWrite(ctx, id, cb.VkDestroySemaphore(object.Device(), handle, p))
 	}
 
+	// SamplerYcbcrConversions
+	for handle, object := range so.SamplerYcbcrConversions().All() {
+		out.MutateAndWrite(ctx, id, cb.VkDestroySamplerYcbcrConversion(object.Device(), handle, p))
+	}
+
 	// Framebuffers, samplers.
 	for handle, object := range so.Framebuffers().All() {
 		out.MutateAndWrite(ctx, id, cb.VkDestroyFramebuffer(object.Device(), handle, p))
@@ -684,6 +690,10 @@ func (t *DisplayToSurface) Transform(ctx context.Context, id api.CmdID, cmd api.
 		cmd.Extras().Observations().ApplyWrites(out.State().Memory.ApplicationPool())
 		surface := c.PSurface().MustRead(ctx, cmd, out.State(), nil)
 		t.SurfaceTypes[uint64(surface)] = uint32(VkStructureType_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR)
+	case *VkCreateStreamDescriptorSurfaceGGP:
+		cmd.Extras().Observations().ApplyWrites(out.State().Memory.ApplicationPool())
+		surface := c.PSurface().MustRead(ctx, cmd, out.State(), nil)
+		t.SurfaceTypes[uint64(surface)] = uint32(VkStructureType_VK_STRUCTURE_TYPE_STREAM_DESCRIPTOR_SURFACE_CREATE_INFO_GGP)
 	}
 	out.MutateAndWrite(ctx, id, cmd)
 }
@@ -707,13 +717,24 @@ type timestampsConfig struct {
 type timestampsRequest struct {
 }
 
+// uniqueConfig returns a replay.Config that is guaranteed to be unique.
+// Any requests made with a Config returned from uniqueConfig will not be
+// batched with any other request.
+func uniqueConfig() replay.Config {
+	return &struct{}{}
+}
+
+type profileRequest struct {
+	overrides *path.OverrideConfig
+}
+
 func (a API) GetInitialPayload(ctx context.Context,
 	capture *path.Capture,
 	device *device.Instance,
 	out transform.Writer) error {
 	transforms := transform.Transforms{}
 	transforms.Add(&makeAttachementReadable{})
-	transforms.Add(&dropInvalidDestroy{})
+	transforms.Add(&dropInvalidDestroy{tag: "GetInitialPayload"})
 	initialCmds, im, _ := initialcmds.InitialCommands(ctx, capture)
 	out.State().Allocator.ReserveRanges(im)
 
@@ -749,7 +770,7 @@ func (a API) Replay(
 
 	transforms := transform.Transforms{}
 	transforms.Add(&makeAttachementReadable{})
-	transforms.Add(&dropInvalidDestroy{})
+	transforms.Add(&dropInvalidDestroy{tag: "Replay"})
 
 	readFramebuffer := newReadFramebuffer(ctx)
 	injector := &transform.Injector{}
@@ -820,6 +841,7 @@ func (a API) Replay(
 	wire := false
 	doDisplayToSurface := false
 	var overdraw *stencilOverdraw
+	var profile *replay.EndOfReplay
 
 	for _, rr := range rrs {
 		switch req := rr.Request.(type) {
@@ -831,7 +853,7 @@ func (a API) Replay(
 				}
 				issues = newFindIssues(ctx, c, n)
 			}
-			issues.reportTo(rr.Result)
+			issues.AddResult(rr.Result)
 			optimize = false
 			if req.displayToSurface {
 				doDisplayToSurface = true
@@ -904,6 +926,12 @@ func (a API) Replay(
 			if req.displayToSurface {
 				doDisplayToSurface = true
 			}
+		case profileRequest:
+			if profile == nil {
+				profile = &replay.EndOfReplay{}
+			}
+			profile.AddResult(rr.Result)
+			optimize = false
 		}
 	}
 
@@ -931,6 +959,8 @@ func (a API) Replay(
 
 	if issues != nil {
 		transforms.Add(issues) // Issue reporting required.
+	} else if profile != nil {
+		transforms.Add(profile)
 	} else {
 		if timestamps != nil {
 			transforms.Add(timestamps)
@@ -1076,4 +1106,18 @@ func (a API) QueryTimestamps(
 		return nil, nil
 	}
 	return res.([]replay.Timestamp), nil
+}
+
+func (a API) Profile(
+	ctx context.Context,
+	intent replay.Intent,
+	mgr replay.Manager,
+	hints *service.UsageHints,
+	overrides *path.OverrideConfig) error {
+
+	c := uniqueConfig()
+	r := profileRequest{overrides}
+
+	_, err := mgr.Replay(ctx, intent, c, r, a, hints)
+	return err
 }

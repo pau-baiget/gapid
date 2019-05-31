@@ -28,6 +28,8 @@ import static com.google.gapid.widgets.Widgets.withIndents;
 import static com.google.gapid.widgets.Widgets.withLayoutData;
 import static com.google.gapid.widgets.Widgets.withMargin;
 import static com.google.gapid.widgets.Widgets.withSpans;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.Lists;
 import com.google.gapid.models.Analytics;
@@ -39,12 +41,15 @@ import com.google.gapid.models.Settings;
 import com.google.gapid.models.TraceTargets;
 import com.google.gapid.proto.service.Service;
 import com.google.gapid.proto.service.Service.ClientAction;
-import com.google.gapid.proto.service.Service.DeviceAPITraceConfiguration;
 import com.google.gapid.proto.service.Service.DeviceTraceConfiguration;
 import com.google.gapid.proto.service.Service.StatusResponse;
+import com.google.gapid.proto.service.Service.TraceType;
+import com.google.gapid.proto.service.Service.TraceTypeCapabilities;
 import com.google.gapid.server.Client;
 import com.google.gapid.server.Tracer;
 import com.google.gapid.server.Tracer.TraceRequest;
+import com.google.gapid.util.Flags;
+import com.google.gapid.util.Flags.Flag;
 import com.google.gapid.util.Messages;
 import com.google.gapid.util.OS;
 import com.google.gapid.util.Scheduler;
@@ -54,6 +59,7 @@ import com.google.gapid.widgets.FileTextbox;
 import com.google.gapid.widgets.LoadingIndicator;
 import com.google.gapid.widgets.Theme;
 import com.google.gapid.widgets.Widgets;
+import com.google.protobuf.TextFormat;
 
 import org.eclipse.jface.dialogs.IDialogConstants;
 import org.eclipse.jface.viewers.ArrayContentProvider;
@@ -80,6 +86,10 @@ import org.eclipse.swt.widgets.Spinner;
 import org.eclipse.swt.widgets.Text;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
@@ -95,14 +105,28 @@ import java.util.logging.Logger;
 public class TracerDialog {
   protected static final Logger LOG = Logger.getLogger(TracerDialog.class.getName());
 
+  public static final Flag<String> perfettoConfig = Flags.value("perfetto", "",
+      "Path to a file containing a perfetto trace config proto in text format. " +
+      "Specifying this flag will enable the Perfetto tracing UI features");
+
   private TracerDialog() {
   }
 
   public static void showOpenTraceDialog(Shell shell, Models models) {
     models.analytics.postInteraction(View.Main, ClientAction.Open);
     FileDialog dialog = new FileDialog(shell, SWT.OPEN);
-    dialog.setFilterNames(new String[] { "Trace Files (*.gfxtrace)", "All Files" });
-    dialog.setFilterExtensions(new String[] { "*.gfxtrace", "*" });
+    dialog.setFilterNames(new String[] {
+        "Trace Files (*.gfxtrace, *.perfetto)",
+        "Graphics Traces (*.gfxtrace)",
+        "Perfetto Traces (*.perfetto)",
+        "All Files"
+    });
+    dialog.setFilterExtensions(new String[] {
+        "*.gfxtrace;*.perfetto",
+        "*.gfxtrace",
+        "*.perfetto",
+        "*"
+    });
     dialog.setFilterPath(models.settings.lastOpenDir);
     String result = dialog.open();
     if (result != null) {
@@ -112,9 +136,12 @@ public class TracerDialog {
 
   public static void showSaveTraceDialog(Shell shell, Models models) {
     models.analytics.postInteraction(View.Main, ClientAction.Save);
+    boolean isPerfetto = models.capture.isPerfetto();
     FileDialog dialog = new FileDialog(shell, SWT.SAVE);
-    dialog.setFilterNames(new String[] { "Trace Files (*.gfxtrace)", "All Files" });
-    dialog.setFilterExtensions(new String[] { "*.gfxtrace", "*" });
+    dialog.setFilterNames(new String[] {
+        "Trace Files (" + (isPerfetto ? "*.perfetto" : "*.gfxtrace") + ")", "All Files"
+    });
+    dialog.setFilterExtensions(new String[] { isPerfetto ? "*.perfetto" : "*.gfxtrace", "*" });
     dialog.setFilterPath(models.settings.lastOpenDir);
     String result = dialog.open();
     if (result != null) {
@@ -152,6 +179,17 @@ public class TracerDialog {
       models.devices.removeListener(listener);
     }
   }
+
+  protected static void readPerfettoConfig(Service.TraceOptions.Builder options, int durationMs) {
+    try (Reader in = new InputStreamReader(new FileInputStream(perfettoConfig.get()))) {
+      TextFormat.merge(in, options.getPerfettoConfigBuilder());
+      options.getPerfettoConfigBuilder().setDurationMs(durationMs);
+    } catch (IOException e) {
+      // This is temporary, experimental code, so just sort of crash.
+      throw new RuntimeException("Failed to read perfetto config from " + perfettoConfig.get(), e);
+    }
+  }
+
 
   /**
    * Dialog to request the information from the user to start a trace (which app, filename, etc.).
@@ -223,7 +261,12 @@ public class TracerDialog {
     private static class TraceInput extends Composite {
       private static final String DEFAULT_TRACE_FILE = "trace";
       private static final String TRACE_EXTENSION = ".gfxtrace";
+      private static final String PERFETTO_EXTENSION = ".perfetto";
       private static final DateFormat TRACE_DATE_FORMAT = new SimpleDateFormat("_yyyyMMdd_HHmm");
+      private static final String FRAMES_LABEL = "Stop After:";
+      private static final String DURATION_LABEL = "Duration:";
+      private static final String FRAMES_UNIT = "Frames (0 for unlimited)";
+      private static final String DURATION_UNIT = "Seconds (0 for unlimited)";
       protected static final String MEC_LABEL = "Trace From Beginning";
       private static final String MEC_LABEL_WARNING =
           "Trace From Beginning (mid-execution capture for %s is experimental)";
@@ -239,7 +282,9 @@ public class TracerDialog {
       private final Text arguments;
       private final Text cwd;
       private final Text envVars;
+      private final Label frameCountLabel;
       private final Spinner frameCount;
+      private final Label frameCountUnit;
       private final Button fromBeginning;
       private final Button withoutBuffering;
       private final Button hideUnknownExtensions;
@@ -277,7 +322,7 @@ public class TracerDialog {
 
         deviceComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
 
-        createLabel(this, "API:");
+        createLabel(this, "Type:");
         api = createApiDropDown(this);
         api.getCombo().setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
 
@@ -319,13 +364,13 @@ public class TracerDialog {
             new GridData(SWT.FILL, SWT.FILL, true, false));
         envVars.setEnabled(false);
 
-        createLabel(this, "Stop After:");
+        frameCountLabel = createLabel(this, FRAMES_LABEL);
         Composite frameCountComposite =
             createComposite(this, withMargin(new GridLayout(2, false), 0, 0));
         frameCount = withLayoutData(
             createSpinner(frameCountComposite, models.settings.traceFrameCount, 0, 999999),
             new GridData(SWT.LEFT, SWT.FILL, false, false));
-        createLabel(frameCountComposite, "Frames (0 for unlimited)");
+        frameCountUnit = createLabel(frameCountComposite, FRAMES_UNIT);
 
         createLabel(this, "");
         fromBeginning = withLayoutData(
@@ -388,7 +433,7 @@ public class TracerDialog {
         api.getCombo().addListener(SWT.Selection, e -> update(models.settings, getSelectedApi()));
 
         Listener mecListener = e -> {
-          DeviceAPITraceConfiguration config = getSelectedApi();
+          TraceTypeCapabilities config = getSelectedApi();
           if (fromBeginning.getSelection() || config == null ||
               config.getMidExecutionCaptureSupport() != Service.FeatureStatus.Experimental) {
             fromBeginning.setText(MEC_LABEL);
@@ -435,7 +480,12 @@ public class TracerDialog {
         combo.setLabelProvider(new LabelProvider() {
           @Override
           public String getText(Object element) {
-            return ((DeviceAPITraceConfiguration)element).getApi();
+            TraceTypeCapabilities ttc = (TraceTypeCapabilities)element;
+            switch (ttc.getType()) {
+              case Graphics: return ttc.getApi();
+              case Perfetto: return "Perfetto";
+              default: throw new AssertionError();
+            }
           }
         });
         return combo;
@@ -450,7 +500,7 @@ public class TracerDialog {
         updateApiDropdown(config, settings);
       }
 
-      private void update(Settings settings, DeviceAPITraceConfiguration config) {
+      private void update(Settings settings, TraceTypeCapabilities config) {
         boolean pcs = config != null && config.getCanDisablePcs();
         disablePcs.setEnabled(pcs);
         disablePcs.setSelection(pcs && settings.traceDisablePcs);
@@ -463,6 +513,18 @@ public class TracerDialog {
         boolean ext = config != null && config.getCanEnableUnsupportedExtensions();
         hideUnknownExtensions.setEnabled(ext);
         hideUnknownExtensions.setSelection(!ext || settings.traceHideUnknownExtensions);
+
+        boolean isPerfetto = isPerfetto(config);
+        withoutBuffering.setEnabled(!isPerfetto);
+        withoutBuffering.setSelection(!isPerfetto && settings.traceWithoutBuffering);
+        frameCountLabel.setText(isPerfetto ? DURATION_LABEL : FRAMES_LABEL);
+        frameCountUnit.setText(isPerfetto ? DURATION_UNIT : FRAMES_UNIT);
+        frameCountUnit.requestLayout();
+
+        if (!userHasChangedOutputFile) {
+          file.setText(formatTraceName(friendlyName));
+          userHasChangedOutputFile = false; // cancel the modify event from set call.
+        }
       }
 
       private void updateDevicesDropDown(Settings settings) {
@@ -485,16 +547,22 @@ public class TracerDialog {
 
       private void updateApiDropdown(DeviceTraceConfiguration config, Settings settings) {
         if (api != null && config != null) {
-          api.setInput(config.getApisList());
-          DeviceAPITraceConfiguration deflt = config.getApis(0);
-          for (DeviceAPITraceConfiguration c : config.getApisList()) {
-            if (c.getApi().equals(settings.traceApi)) {
-              deflt = c;
-              break;
+          List<TraceTypeCapabilities> caps = config.getApisList().stream()
+              .filter(t -> !isPerfetto(t) || !perfettoConfig.get().isEmpty())
+              .collect(toList());
+          api.setInput(caps);
+          if (!caps.isEmpty()) {
+            TraceTypeCapabilities deflt = caps.get(0);
+            for (TraceTypeCapabilities c : caps) {
+              if (c.getType().name().equals(settings.traceType) &&
+                  (c.getApi().isEmpty() || c.getApi().equals(settings.traceApi))) {
+                deflt = c;
+                break;
+              }
             }
+            api.setSelection(new StructuredSelection(deflt));
+            api.getCombo().notifyListeners(SWT.Selection, new Event());
           }
-          api.setSelection(new StructuredSelection(deflt));
-          api.getCombo().notifyListeners(SWT.Selection, new Event());
         }
       }
 
@@ -544,13 +612,16 @@ public class TracerDialog {
       }
 
       protected String formatTraceName(String name) {
-        return (name.isEmpty() ? DEFAULT_TRACE_FILE : name) + date + TRACE_EXTENSION;
+        TraceTypeCapabilities config = getSelectedApi();
+        String ext = config != null && isPerfetto(config) ? PERFETTO_EXTENSION : TRACE_EXTENSION;
+        return (name.isEmpty() ? DEFAULT_TRACE_FILE : name) + date + ext;
       }
 
       public boolean isReady() {
-        return getSelectedDevice() != null && getSelectedApi() != null &&
-            !traceTarget.getText().isEmpty() && !directory.getText().isEmpty() &&
-            !file.getText().isEmpty();
+        TraceTypeCapabilities config = getSelectedApi();
+        return getSelectedDevice() != null && config != null &&
+            (!config.getRequiresApplication() || !traceTarget.getText().isEmpty()) &&
+            !directory.getText().isEmpty() && !file.getText().isEmpty();
       }
 
       public void addModifyListener(Listener listener) {
@@ -568,10 +639,11 @@ public class TracerDialog {
 
       public TraceRequest getTraceRequest(Settings settings) {
         DeviceCaptureInfo dev = devices.get(device.getCombo().getSelectionIndex());
-        DeviceAPITraceConfiguration config = getSelectedApi();
+        TraceTypeCapabilities config = getSelectedApi();
         File output = getOutputFile();
 
         settings.traceDevice = dev.device.getSerial();
+        settings.traceType = config.getType().name();
         settings.traceApi = config.getApi();
         settings.traceUri = traceTarget.getText();
         settings.traceArguments = arguments.getText();
@@ -583,6 +655,7 @@ public class TracerDialog {
 
         Service.TraceOptions.Builder options = Service.TraceOptions.newBuilder()
             .setDevice(dev.path)
+            .setType(config.getType())
             .addApis(config.getApi())
             .setUri(traceTarget.getText())
             .setAdditionalCommandLineArgs(arguments.getText())
@@ -610,6 +683,13 @@ public class TracerDialog {
         if (config.getCanDisablePcs()) {
           settings.traceDisablePcs = disablePcs.getSelection();
           options.setDisablePcs(disablePcs.getSelection());
+        }
+
+        if (isPerfetto(config)) {
+          int duration = frameCount.getSelection() * 1000;
+          // TODO: this isn't really unlimitted.
+          duration = (duration == 0) ? (int)MINUTES.toMillis(10) : duration;
+          readPerfettoConfig(options, duration);
         }
 
         return new TraceRequest(output, options.build());
@@ -649,9 +729,9 @@ public class TracerDialog {
         return sel.isEmpty() ? null : (DeviceCaptureInfo)sel.getFirstElement();
       }
 
-      protected DeviceAPITraceConfiguration getSelectedApi() {
+      protected TraceTypeCapabilities getSelectedApi() {
         IStructuredSelection sel = api.getStructuredSelection();
-        return sel.isEmpty() ? null : ((DeviceAPITraceConfiguration)sel.getFirstElement());
+        return sel.isEmpty() ? null : ((TraceTypeCapabilities)sel.getFirstElement());
       }
 
       private File getOutputFile() {
@@ -661,6 +741,10 @@ public class TracerDialog {
         }
         String dir = directory.getText();
         return dir.isEmpty() ? new File(name) : new File(dir, name);
+      }
+
+      private static boolean isPerfetto(TraceTypeCapabilities config) {
+        return config.getType() == TraceType.Perfetto;
       }
     }
   }

@@ -35,6 +35,14 @@ import (
 	"github.com/google/gapid/gapis/service/path"
 )
 
+type mockDevice struct {
+	bind.Simple
+}
+
+func (*mockDevice) CanTrace() bool {
+	return false
+}
+
 func exportReplay(ctx context.Context, c *path.Capture, d *path.Device, out string, opts *service.ExportReplayOptions) error {
 	cap, err := capture.ResolveGraphicsFromPath(ctx, c)
 
@@ -42,7 +50,8 @@ func exportReplay(ctx context.Context, c *path.Capture, d *path.Device, out stri
 		instance := *cap.Header.Device
 		instance.Name = "mock-" + instance.Name
 		instance.GenID()
-		dev := &bind.Simple{To: &instance}
+		dev := &mockDevice{}
+		dev.To = &instance
 		bind.GetRegistry(ctx).AddDevice(ctx, dev)
 		d = path.NewDevice(dev.Instance().ID.ID())
 	}
@@ -51,8 +60,8 @@ func exportReplay(ctx context.Context, c *path.Capture, d *path.Device, out stri
 
 	var queries []func(mgr replay.Manager) error
 	switch {
-	case opts.Report != nil && len(opts.GetFramebufferAttachmentRequests) > 0:
-		return log.Errf(ctx, nil, "Report and Framebuffer requests are not compatible.")
+	case opts.Report != nil && len(opts.GetFramebufferAttachmentRequests) > 0 && opts.GetTimestampsRequest != nil:
+		return log.Errf(ctx, nil, "at most one of the request should be specified")
 	case opts.GetFramebufferAttachmentRequests != nil:
 		r := &path.ResolveConfig{ReplayDevice: d}
 		changes, err := resolve.FramebufferChanges(ctx, c, r)
@@ -90,6 +99,17 @@ func exportReplay(ctx context.Context, c *path.Capture, d *path.Device, out stri
 					return err
 				})
 			}
+		}
+	case opts.GetTimestampsRequest != nil:
+		for _, a := range cap.APIs {
+			a, ok := a.(replay.QueryTimestamps)
+			if !ok {
+				continue
+			}
+			queries = append(queries, func(mgr replay.Manager) error {
+				_, err := a.QueryTimestamps(ctx, intent, mgr, nil)
+				return err
+			})
 		}
 	case opts.Report != nil:
 		// TODO(hysw): Add a simple replay request that output commands as

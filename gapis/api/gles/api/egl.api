@@ -357,15 +357,15 @@ cmd EGLBoolean eglSurfaceAttrib(EGLDisplay display,
   return ? // TODO
 }
 
-@no_replay
 @frame_start
+@custom
 ///http://www.khronos.org/registry/egl/sdk/docs/man/html/eglSwapBuffers.xhtml
 cmd EGLBoolean eglSwapBuffers(EGLDisplay display, void* surface) {
   return ?
 }
 
-@no_replay
 @frame_start
+@no_replay
 ///https://www.khronos.org/registry/egl/extensions/KHR/EGL_KHR_swap_buffers_with_damage.txt
 cmd EGLBoolean eglSwapBuffersWithDamageKHR(EGLDisplay dpy,
                                            EGLSurface surface,
@@ -433,11 +433,12 @@ cmd EGLImageKHR eglCreateImageKHR(EGLDisplay      display,
       eglImage.Extra = info
       for i in 0 .. max!u32(info.LayerCount, 1) {
         image := new!Image(
-          Width:        as!GLsizei(info.Width),
-          Height:       as!GLsizei(info.Height),
-          SizedFormat:  sf,
-          DataFormat:   sfInfo.UnsizedFormat,
-          DataType:     sfInfo.DataType,
+          Width:          as!GLsizei(info.Width),
+          Height:         as!GLsizei(info.Height),
+          SizedFormat:    sf,
+          InternalFormat: sf,
+          DataFormat:     sfInfo.UnsizedFormat,
+          DataType:       sfInfo.DataType,
         )
         size := uncompressedImageSize(image.Width, image.Height, image.DataFormat, image.DataType)
         image.Data = make!u8(size)

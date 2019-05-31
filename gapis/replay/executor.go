@@ -21,7 +21,7 @@ import (
 	"github.com/google/gapid/core/data/id"
 	"github.com/google/gapid/core/log"
 	"github.com/google/gapid/core/os/device"
-	gapir "github.com/google/gapid/gapir/client"
+	"github.com/google/gapid/gapir"
 	"github.com/google/gapid/gapis/database"
 	"github.com/google/gapid/gapis/replay/builder"
 )
@@ -74,14 +74,14 @@ func (e executor) execute(ctx context.Context, connection *backgroundConnection)
 		return log.Errf(ctx, err, "Storing replay payload")
 	}
 	e.payloadID = plid
-	log.E(ctx, "Replaying %v", plid)
+	log.I(ctx, "Replaying %v", plid)
 	clean, err := connection.SetReplayExecutor(ctx, e)
 	if err != nil {
 		return err
 	}
 	defer clean()
 
-	log.E(ctx, "Beginning replay %v", plid)
+	log.I(ctx, "Beginning replay %v", plid)
 	// Start replay with id
 	connection.BeginReplay(ctx, plid.String(), e.dependent)
 	// Wait for finished
@@ -89,14 +89,14 @@ func (e executor) execute(ctx context.Context, connection *backgroundConnection)
 	return err
 }
 
-func (e executor) HandleFinished(ctx context.Context, err error, conn *gapir.Connection) error {
-	log.E(ctx, "Finished replay %v", e.payloadID)
+func (e executor) HandleFinished(ctx context.Context, err error, conn gapir.Connection) error {
+	log.I(ctx, "Finished replay %v", e.payloadID)
 	e.finished <- err
 	return nil
 }
 
 // HandlePostData implements gapir.ReplayResponseHandler interface.
-func (e executor) HandlePostData(ctx context.Context, postData *gapir.PostData, conn *gapir.Connection) error {
+func (e executor) HandlePostData(ctx context.Context, postData *gapir.PostData, conn gapir.Connection) error {
 	ctx = status.Start(ctx, "Post Data (count: %d)", len(postData.PostDataPieces))
 	defer status.Finish(ctx)
 
@@ -105,7 +105,7 @@ func (e executor) HandlePostData(ctx context.Context, postData *gapir.PostData, 
 }
 
 // HandleNotification implements gapir.ReplayResponseHandler interface.
-func (e executor) HandleNotification(ctx context.Context, notification *gapir.Notification, conn *gapir.Connection) error {
+func (e executor) HandleNotification(ctx context.Context, notification *gapir.Notification, conn gapir.Connection) error {
 	e.handleNotification(notification)
 	return nil
 }

@@ -284,7 +284,7 @@ class TrackingRange {
   }
 
   // Set memory range 'dirty', the memory range to set is derived from the
-  // given memory range specified with |addr| and |size|. The actual 'drity'
+  // given memory range specified with |addr| and |size|. The actual 'dirty'
   // range is guaranteed to fully cover the range of |addr| and |size| and is
   // page aligned. The given |on_set| callback will be called with the acutal
   // 'dirty' range. The |on_set| callback is enforce to be a function pointer
@@ -443,10 +443,24 @@ class MemoryTrackerImpl : public SpecificMemoryTracker {
       std::function<void(void* dirty_addr, size_t dirty_size)> handle_dirty);
 
   bool DisableMemoryTrackerImpl() {
+    // Loop over tracking_ranges_ but DO NOT use an iterator, as
+    // UntrackRangeImpl() itself uses an iterator over tracking_ranges_ to
+    // *delete* an element.
+
+    struct range {
+      uintptr_t start;
+      uintptr_t end;
+    };
+    std::vector<struct range> ranges;
+    ranges.reserve(tracking_ranges_.size());
+    for (const auto& r : tracking_ranges_) {
+      ranges.push_back({r.second->start(), r.second->end()});
+    }
+
     bool result = true;
-    for (auto& r : tracking_ranges_) {
-      result &= UntrackRangeImpl(reinterpret_cast<void*>(r.second->start()),
-                                 r.second->end() - r.second->start());
+    for (auto r : ranges) {
+      result &=
+          UntrackRangeImpl(reinterpret_cast<void*>(r.start), r.end - r.start);
     }
     result &= derived_tracker_type::DisableMemoryTrackerImpl();
     return result;

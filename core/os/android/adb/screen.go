@@ -17,6 +17,7 @@ package adb
 import (
 	"context"
 	"regexp"
+	"time"
 
 	"github.com/google/gapid/core/fault"
 	"github.com/google/gapid/core/log"
@@ -24,64 +25,95 @@ import (
 )
 
 const (
-	ErrScreenOnState   = fault.Const("Couldn't get screen-on state")
-	ErrLockScreenState = fault.Const("Couldn't get lockscreen state")
+	screenOnLocked = iota
+	screenOnUnlocked
+	screenOffLocked
+	screenOffUnlocked
 )
 
-var displayOnRegex = regexp.MustCompile("Display Power: state=(ON|DOZE|OFF)")
-var displayReadyRegex = regexp.MustCompile("mDisplayReady=(true|false)")
+const (
+	keyEventEffectDelay time.Duration = 500 * time.Millisecond
+)
 
-// IsScreenOn returns true if the device's screen is currently on.
-func (b *binding) IsScreenOn(ctx context.Context) (bool, error) {
-	res, err := b.Shell("dumpsys", "power").Call(ctx)
+const (
+	ErrScreenState = fault.Const("Couldn't get screen state")
+)
+
+var screenStateRegex = regexp.MustCompile("mAwake=(true|false)")
+var lockStateRegex = regexp.MustCompile("(?:mDreamingLockscreen|mShowingLockscreen)=(true|false)")
+
+// getScreenState returns the screen state
+func (b *binding) getScreenState(ctx context.Context) (int, error) {
+	res, err := b.Shell("dumpsys", "window").Call(ctx)
+	if err != nil {
+		return -1, err
+	}
+
+	screenStateMatch := screenStateRegex.FindStringSubmatch(res)
+	screenState := false
+	switch {
+	case screenStateMatch == nil:
+		return -1, log.Err(ctx, ErrScreenState, "")
+	case screenStateMatch[1] == "true":
+		screenState = true
+	}
+
+	lockStateMatch := lockStateRegex.FindStringSubmatch(res)
+	lockState := false
+	switch {
+	case lockStateMatch == nil:
+		return -1, log.Err(ctx, ErrScreenState, "Unable to determine lock state")
+	case lockStateMatch[1] == "true":
+		lockState = true
+	}
+
+	switch {
+	case screenState && lockState:
+		return screenOnLocked, nil
+	case screenState:
+		return screenOnUnlocked, nil
+	case lockState:
+		return screenOffLocked, nil
+	default:
+		return screenOffUnlocked, nil
+	}
+}
+
+// isScreenUnlocked returns true is the device's screen is on and unlocked.
+func (b *binding) isScreenUnlocked(ctx context.Context) (bool, error) {
+	screenState, err := b.getScreenState(ctx)
 	if err != nil {
 		return false, err
 	}
-	switch displayOnRegex.FindString(res) {
-	case "Display Power: state=ON":
-		switch displayReadyRegex.FindString(res) {
-		case "mDisplayReady=true":
-			return true, nil
-		case "mDisplayReady=false":
-			return false, nil
-		}
-	case "Display Power: state=DOZE":
-		return false, nil
-	case "Display Power: state=OFF":
-		return false, nil
-	}
-	return false, log.Err(ctx, ErrScreenOnState, "")
+	return screenState == screenOnUnlocked, nil
 }
 
-// TurnScreenOn turns the device's screen on.
-func (b *binding) TurnScreenOn(ctx context.Context) error {
-	if isOn, err := b.IsScreenOn(ctx); err != nil || isOn {
-		return err
-	}
-	return b.KeyEvent(ctx, android.KeyCode_Power)
-}
-
-// TurnScreenOff turns the device's screen off.
-func (b *binding) TurnScreenOff(ctx context.Context) error {
-	if isOn, err := b.IsScreenOn(ctx); err != nil || !isOn {
-		return err
-	}
-	return b.KeyEvent(ctx, android.KeyCode_Power)
-}
-
-var keyguardRegex = regexp.MustCompile("mKeyguardShowing=(true|false)")
-
-// IsShowingLockscreen returns true if the device's lockscreen is currently showing.
-func (b *binding) IsShowingLockscreen(ctx context.Context) (bool, error) {
-	res, err := b.Shell("dumpsys", "activity", "activities").Call(ctx)
+// UnlockScreen returns true if it managed to turn on and unlock the screen.
+func (b *binding) UnlockScreen(ctx context.Context) (bool, error) {
+	screenState, err := b.getScreenState(ctx)
 	if err != nil {
 		return false, err
 	}
-	switch keyguardRegex.FindString(res) {
-	case "mKeyguardShowing=true":
+	switch screenState {
+	case screenOnUnlocked:
 		return true, nil
-	case "mKeyguardShowing=false":
-		return false, nil
+
+	default:
+		// Devices may do unexpected transitions between screen
+		// states, so this code does not try to be smart about
+		// expected state changes: unless screenOnUnlocked, apply the
+		// wakeup (put screen on) and menu (unlock screen if no
+		// credentials required) key event sequence.
+		if err := b.KeyEvent(ctx, android.KeyCode_Wakeup); err != nil {
+			return false, err
+		}
+		if err := b.KeyEvent(ctx, android.KeyCode_Menu); err != nil {
+			return false, err
+		}
+		// A sleep here is necessary to make sure the key events had
+		// enough time to affect the screen state.
+		time.Sleep(keyEventEffectDelay)
+		return b.isScreenUnlocked(ctx)
 	}
-	return false, log.Err(ctx, ErrLockScreenState, "")
+	return false, log.Err(ctx, ErrScreenState, "")
 }

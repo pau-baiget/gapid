@@ -18,7 +18,7 @@ def _extract_impl(ctx):
     if ctx.attr.dir:
         base = ctx.attr.dir + "/"
     for entry in ctx.attr.entries:
-        out = ctx.new_file(ctx.bin_dir, base + entry)
+        out = ctx.actions.declare_file(base + entry)
         to =  out.path[:-len(entry)]
         outs += [out]
         ctx.actions.run_shell(
@@ -34,8 +34,7 @@ extract = rule(
     _extract_impl,
     attrs = {
         "zip": attr.label(
-            single_file = True,
-            allow_files = True,
+            allow_single_file = True,
             mandatory = True,
         ),
         "entries": attr.string_list(mandatory=True),

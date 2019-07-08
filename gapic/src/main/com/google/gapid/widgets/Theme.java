@@ -54,12 +54,14 @@ import java.util.Map;
  * {@link Color colors}, etc.).
  */
 public interface Theme {
+  @Icon(file = "add.png") public Image add();
   @Icon(file = "android.png", color = 0x335577) public Image androidLogo();
   @Icon(file = "arrow.png") public Image arrow();
   @Icon(file = "arrow_drop_down.png") public Image arrowDropDownLight();
   @Icon(file = "arrow_drop_right.png") public Image arrowDropRightLight();
   @Icon(file = "arrow_drop_down.png", color = 0xFFFFFF) public Image arrowDropDownDark();
   @Icon(file = "arrow_drop_right.png", color = 0xFFFFFF) public Image arrowDropRightDark();
+  @Icon(file = "clipboard.png") public Image clipboard();
   @Icon(file = "color_buffer0.png") public Image colorBuffer0();
   @Icon(file = "color_buffer1.png") public Image colorBuffer1();
   @Icon(file = "color_buffer2.png") public Image colorBuffer2();
@@ -71,17 +73,23 @@ public interface Theme {
   @Icon(file = "faceted.png") public Image faceted();
   @Icon(file = "flat.png") public Image flat();
   @Icon(file = "flip_vertically.png") public Image flipVertically();
+  @Icon(file = "fullscreen.png") public Image fullscreen();
+  @Icon(file = "fullscreen_exit.png") public Image fullscreenExit();
   @Icon(file = "jump.png") public Image jump();
+  @Icon(file = "help.png") public Image help();
   @Icon(file = "histogram.png") public Image toggleHistogram();
   @Icon(file = "lit.png") public Image lit();
   @Icon(file = "logo_128.png") public Image dialogLogo();
+  @Icon(file = "more.png") public Image more();
   @Icon(file = "normals.png") public Image normals();
+  @Icon(file = "open.png") public Image open();
   @Icon(file = "overdraw.png") public Image overdraw();
   @Icon(file = "point_cloud.png") public Image pointCloud();
   @Icon(file = "range_start.png") public Image rangeStartLight();
   @Icon(file = "range_end.png") public Image rangeEndLight();
   @Icon(file = "range_start.png", color = 0xFFFFFF) public Image rangeStartDark();
   @Icon(file = "range_end.png", color = 0xFFFFFF) public Image rangeEndDark();
+  @Icon(file = "recent.png") public Image recent();
   @Icon(file = "refresh.png") public Image refresh();
   @Icon(file = "save.png") public Image save();
   @Icon(file = "settings.png") public Image settings();
@@ -125,6 +133,7 @@ public interface Theme {
 
   // About & Welcome dialog text colors
   @RGB(argb = 0xffa9a9a9) public Color welcomeVersionColor();
+  @RGB(argb = 0xffa9a9a9) public Color shortcutKeyHintColor();
 
   // Logging view colors by log level.
   @RGB(argb = 0xbb000000) public Color logVerboseForeground();
@@ -154,6 +163,15 @@ public interface Theme {
 
   @RGB(argb = 0xffcccccc) public Color statusBarMemoryBar();
 
+  @RGB(argb = 0xff000000) public Color tabTitle(); // TODO: should be system defined
+  @RGB(argb = 0xffffffff) public Color tabBackgound();
+  @RGB(argb = 0xffc0c0c0) public Color tabFolderLine();
+  @RGB(argb = 0xff3195fd) public Color tabFolderLineSelected();
+  @RGB(argb = 0xffe5f3ff) public Color tabFolderHovered();
+  @RGB(argb = 0xfffbfbfd) public Color tabFolderSelected();
+  @RGB(argb = 0xffd1e3f7) public Color tabFolderPlaceholderFill();
+  @RGB(argb = 0xff4a90e2) public Color tabFolderPlaceholderStroke();
+
   @TextStyle(foreground = 0xa9a9a9) public Styler structureStyler();
   @TextStyle(foreground = 0x0000ee) public Styler identifierStyler();
   @TextStyle(bold = true) public Styler labelStyler();
@@ -163,6 +181,7 @@ public interface Theme {
 
   @Text(Text.Mono) public Font monoSpaceFont();
   @Text(Text.Big) public Font bigBoldFont();
+  @Text(Text.TabTitle) public Font selectedTabTitleFont();
 
   public void dispose();
 
@@ -258,7 +277,7 @@ public interface Theme {
   @Target(ElementType.METHOD)
   @Retention(RetentionPolicy.RUNTIME)
   public static @interface Text {
-    public static final int Mono = 1, Big = 2;
+    public static final int Mono = 1, Big = 2, TabTitle = 3;
 
     public int value();
   }
@@ -340,7 +359,9 @@ public interface Theme {
     private boolean loadIcon(Method method) {
       Icon icon = method.getDeclaredAnnotation(Icon.class);
       if (icon != null) {
-        resources.put(method.getName(), loadImage(icon.file(), icon.color()));
+        int color = icon.color();
+        Image image = (color >= 0) ? loadImage(icon.file(), color) : loadImage(icon.file());
+        resources.put(method.getName(), image);
         return true;
       }
       return false;
@@ -352,7 +373,7 @@ public interface Theme {
         String[] names = seq.names();
         Image[] icons = new Image[names.length == 0 ? seq.count() : names.length];
         for (int i = 0; i < icons.length; i++) {
-          icons[i] = loadImage(names.length == 0 ? String.format(seq.pattern(), i) : names[i], -1);
+          icons[i] = loadImage(names.length == 0 ? String.format(seq.pattern(), i) : names[i]);
         }
         resources.put(method.getName(), icons);
         return true;
@@ -360,19 +381,28 @@ public interface Theme {
       return false;
     }
 
+    private Image loadImage(String img) {
+      return
+          ImageDescriptor.createFromURL(Resources.getResource("icons/" + img)).createImage(display);
+    }
+
     private Image loadImage(String img, int color) {
-      ImageData data = ImageDescriptor.createFromURL(Resources.getResource("icons/" + img))
-          .getImageData(DPIUtil.getDeviceZoom());
-      if (color >= 0) {
-        for (int y = 0, o = 0; y < data.height; y++, o += data.bytesPerLine) {
-          for (int x = 0, i = o; x < data.width; x++) {
-            data.data[i++] = (byte)((color >> 16) & 0xFF);
-            data.data[i++] = (byte)((color >> 8) & 0xFF);
-            data.data[i++] = (byte)(color & 0xFF);
-          }
+      ImageDescriptor desc = ImageDescriptor.createFromURL(Resources.getResource("icons/" + img));
+      int zoom = DPIUtil.getDeviceZoom();
+      ImageData data = desc.getImageData(zoom);
+      if (data == null && zoom != 100) {
+        zoom = 100;
+        data = desc.getImageData(100);
+      }
+
+      for (int y = 0, o = 0; y < data.height; y++, o += data.bytesPerLine) {
+        for (int x = 0, i = o; x < data.width; x++) {
+          data.data[i++] = (byte)((color >> 16) & 0xFF);
+          data.data[i++] = (byte)((color >> 8) & 0xFF);
+          data.data[i++] = (byte)(color & 0xFF);
         }
       }
-      return new Image(display, data);
+      return new Image(display, new DPIUtil.AutoScaleImageDataProvider(display, data, zoom));
     }
 
     private boolean loadColor(Method method) {
@@ -408,6 +438,14 @@ public interface Theme {
             Font dflt = JFaceResources.getDefaultFont();
             Font font = FontDescriptor.createFrom(dflt)
                 .setHeight(dflt.getFontData()[0].getHeight() * 3 / 2)
+                .setStyle(SWT.BOLD)
+                .createFont(display);
+            resources.put(method.getName(), font);
+            return true;
+          }
+          case Text.TabTitle: {
+            Font dflt = JFaceResources.getDefaultFont();
+            Font font = FontDescriptor.createFrom(dflt)
                 .setStyle(SWT.BOLD)
                 .createFont(display);
             resources.put(method.getName(), font);

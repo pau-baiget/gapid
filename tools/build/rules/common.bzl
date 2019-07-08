@@ -40,8 +40,7 @@ copy = rule(
     _copy_impl,
     attrs = {
         "src": attr.label(
-            single_file = True,
-            allow_files = True,
+            allow_single_file = True,
             mandatory = True,
         ),
         "dst": attr.output(),
@@ -60,7 +59,7 @@ def _copy_to_impl(ctx):
     outs = []
     for src in filtered:
         dstname = ctx.attr.rename.get(src.basename, default = src.basename)
-        dst = ctx.new_file(ctx.bin_dir, ctx.attr.to + "/" + dstname)
+        dst = ctx.actions.declare_file(ctx.attr.to + "/" + dstname)
         outs += [dst]
         _copy(ctx, src, dst)
 
@@ -92,7 +91,7 @@ def _copy_tree_impl(ctx):
             path = path[len(ctx.attr.strip):]
         if ctx.attr.to:
             path = ctx.attr.to + "/" + path
-        dst = ctx.new_file(ctx.bin_dir, path)
+        dst = ctx.actions.declare_file(path)
         outs += [dst]
         _copy(ctx, src, dst)
 
@@ -123,7 +122,7 @@ def _copy_exec_impl(ctx):
         extension = "." + extension
     if ctx.label.name.endswith(extension):
         extension = ""
-    out = ctx.new_file(ctx.label.name + extension)
+    out = ctx.actions.declare_file(ctx.label.name + extension)
 
     _copy(ctx, src, out)
 

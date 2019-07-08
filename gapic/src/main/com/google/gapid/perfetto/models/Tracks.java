@@ -24,8 +24,8 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.gapid.models.Perfetto;
 import com.google.gapid.perfetto.canvas.Panel;
+import com.google.gapid.perfetto.views.CounterPanel;
 import com.google.gapid.perfetto.views.CpuSummaryPanel;
-import com.google.gapid.perfetto.views.MemorySummaryPanel;
 import com.google.gapid.perfetto.views.ProcessSummaryPanel;
 import com.google.gapid.perfetto.views.ThreadPanel;
 import com.google.gapid.perfetto.views.TitlePanel;
@@ -47,8 +47,11 @@ public class Tracks {
 
   public static ListenableFuture<Perfetto.Data.Builder> enumerate(Perfetto.Data.Builder data) {
     return transformAsync(enumerateCpu(data), $1 ->
-        transform(enumerateCounters(data), $2 ->
-          enumerateProcesses(data)));
+        transform(enumerateCounters(data), $2 -> {
+          enumerateGpu(data);
+          enumerateProcesses(data);
+          return data;
+        }));
   }
 
   private static ListenableFuture<Perfetto.Data.Builder> enumerateCpu(Perfetto.Data.Builder data) {
@@ -64,13 +67,27 @@ public class Tracks {
 
   public static ListenableFuture<Perfetto.Data.Builder> enumerateCounters(
       Perfetto.Data.Builder data) {
-    return transform(MemorySummaryTrack.enumerate(data.qe), track -> {
-      if (track != null) {
-        data.tracks.addTrack(null, track.getId(), "Memory Usage",
-            single(state -> new MemorySummaryPanel(state, track)));
+    return MemorySummaryTrack.enumerate(data);
+  }
+
+  public static Perfetto.Data.Builder enumerateGpu(Perfetto.Data.Builder data) {
+    boolean found = false;
+    for (CounterInfo counter : data.getCounters().values()) {
+      if ("gpu".equals(counter.refType)) {
+        if (!found) {
+          addGpuGroup(data);
+          found = true;
+        }
+        CounterTrack track = new CounterTrack(counter.id, counter.min, counter.max);
+        data.tracks.addTrack("gpu", track.getId(), counter.name,
+            single(state -> new CounterPanel(state, track, counter.name), true));
       }
-      return data;
-    });
+    }
+    return data;
+  }
+
+  private static void addGpuGroup(Perfetto.Data.Builder data) {
+    data.tracks.addLabelGroup(null, "gpu", "GPU", group(state -> new TitlePanel("GPU"), true));
   }
 
   public static Perfetto.Data.Builder enumerateProcesses(Perfetto.Data.Builder data) {
@@ -107,10 +124,10 @@ public class Tracks {
       threads.forEach(track -> {
         TrackConfig.Track.UiFactory<Panel> ui;
         if (track.getThread().maxDepth == 0) {
-          ui = single(state -> new ThreadPanel(state, track));
+          ui = single(state -> new ThreadPanel(state, track), false);
         } else {
           ui = single(
-              state -> new ThreadPanel(state, track), ThreadPanel::setCollapsed, true);
+              state -> new ThreadPanel(state, track), false, ThreadPanel::setCollapsed, true);
         }
         String threadParent = (track.getThread().totalDur >= idleCutoffThread || !hasIdleThreads) ?
             summary.getId() : summary.getId() + "_idle";

@@ -48,9 +48,11 @@ public class CopyPaste {
   }
 
   public void dispose() {
-    display.removeFilter(SWT.FocusIn, focusListener);
-    display.removeFilter(SWT.FocusOut, focusListener);
-    clipboard.dispose();
+    if (!display.isDisposed()) {
+      display.removeFilter(SWT.FocusIn, focusListener);
+      display.removeFilter(SWT.FocusOut, focusListener);
+      clipboard.dispose();
+    }
   }
 
   public void registerCopySource(Control focusReceiver, CopySource source) {
@@ -127,6 +129,10 @@ public class CopyPaste {
       transfers[i] = data[i].transfer;
     }
     clipboard.setContents(objs, transfers);
+  }
+
+  public void setContents(String s) {
+    clipboard.setContents(new Object[]{s}, new Transfer[]{TextTransfer.getInstance()});
   }
 
   public void addListener(Listener listener) {

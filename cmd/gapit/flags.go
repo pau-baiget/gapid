@@ -207,6 +207,7 @@ type (
 		GroupByDrawCall        bool   `help:"Group commands by draw call"`
 		GroupByFrame           bool   `help:"Group commands by frame"`
 		GroupByUserMarkers     bool   `help:"Group commands by user markers"`
+		GroupBySubmission      bool   `help:"Group commands by submissions"`
 		IncludeNoContextGroups bool   `help:"_Include no context groups"`
 		AllowIncompleteFrame   bool   `help:"_Make a group for incomplete frames"`
 		Observations           ObservationFlags
@@ -216,7 +217,7 @@ type (
 	ReplaceResourceFlags struct {
 		Gapis                GapisFlags
 		Gapir                GapirFlags
-		Handle               string `help:"required. handle of the resource to replace"`
+		Handle               string `help:"required. handle or ID of the resource to replace"`
 		ResourcePath         string `help:"file path for the new resource"`
 		At                   int    `help:"command index to replace the resource(s) at"`
 		UpdateResourceBinary string `help:"shaders only. binary to run for every shader; consumes resource data from standard input and writes to standard output"`
@@ -274,11 +275,12 @@ type (
 		No struct {
 			Buffer bool `help:"Do not buffer the output, this helps if the application crashes"`
 		}
-		API   string `help:"only capture the given API valid options are gles and vulkan"`
+		API   string `help:"only capture the given API valid options are gles, vulkan, and perfetto"`
 		Local struct {
 			Port int `help:"connect to an application already running on the server using this port"`
 		}
 		PipeName string `help:"The name of the pipe to connect/listen to."`
+		Perfetto string `help:"File containing the Perfetto configuration proto."`
 	}
 	BenchmarkFlags struct {
 		DeviceFlags
@@ -386,5 +388,8 @@ type (
 		Gapir GapirFlags
 		CommandFilterFlags
 		CaptureFileFlags
+	}
+
+	MakeDocFlags struct {
 	}
 )

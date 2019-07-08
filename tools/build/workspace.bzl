@@ -39,8 +39,8 @@ def gapid_dependencies(android = True, mingw = True, locals = {}):
         locals = locals,
         organization = "bazelbuild",
         project = "rules_go",
-        commit = "3c34e66b0507056e83bcbd9c963ab9d7e6cb049f",  # 0.18.3
-        sha256 = "eee73ae5c29e421b2bfda62fef86ce266a942f66f19ccb4dfb03b4fa428986a5",
+        commit = "6fc21c78143ff1d4ea98100e8fd7a928d45abd00",  # 0.18.6
+        sha256 = "6356b0c591659b2da6f8149dfe7207a23d2cc41d3ed3932f0be3aa5dad7a4d2f",
     )
 
     maybe_repository(
@@ -59,8 +59,9 @@ def gapid_dependencies(android = True, mingw = True, locals = {}):
         locals = locals,
         organization = "google",
         project = "protobuf",
-        commit = "66dc42d891a4fc8e9190c524fd67961688a37bbe", # 3.6.1 + changes
-        sha256 = "23dcfef4adf06e1db7f1d391c035896a92eec546fff5ef9244b6e7b9ee24aa66",
+        commit = "815ff7e1fb2d417d5aebcbf5fc46e626b18dc834", # Head of 3.8.x branch
+        sha256 = "083646275522dc57e145f769c2daf39d469757bafcc5b7d09b119dfaf1b873b8",
+        repo_mapping = {"@zlib": "@net_zlib"},
     )
 
     maybe_repository(
@@ -211,7 +212,7 @@ def gapid_dependencies(android = True, mingw = True, locals = {}):
             native.android_ndk_repository,
             name = "androidndk",
             locals = locals,
-            api_level = 21, # This is the minimum API
+            api_level = 23, # This is the minimum API
         )
 
         maybe_repository(
@@ -253,7 +254,7 @@ def _grpc_deps(locals):
         organization = "madler",
         project = "zlib",
         commit = "cacf7f1d4e3d44d871b605da3b647f07d718623f",
-        build_file = "@com_github_grpc_grpc//third_party:zlib.BUILD",
+        build_file = "@gapid//tools/build/third_party:zlib.BUILD",
         sha256 = "1cce3828ec2ba80ff8a4cac0ab5aa03756026517154c4b450e617ede751d41bd",
     )
 

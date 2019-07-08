@@ -15,19 +15,13 @@
 # True source of GAPID versions.
 # Increment these numbers immediately after releasing a new version.
 GAPID_VERSION_MAJOR="1"
-GAPID_VERSION_MINOR="6"
+GAPID_VERSION_MINOR="7"
 GAPID_VERSION_POINT="0"
 
 # See bazel.rc. Can be overriden on the command line with:
 #   bazel build --define GAPID_BUILD_NUMBER=<#> --define GAPID_BUILD_SHA=<sha>
 GAPID_BUILD_NUMBER="$(GAPID_BUILD_NUMBER)"
 GAPID_BUILD_SHA="$(GAPID_BUILD_SHA)"
-
-def version():
-    return "{}.{}.{}:{}".format(GAPID_VERSION_MAJOR, GAPID_VERSION_MINOR, GAPID_VERSION_POINT, GAPID_BUILD_SHA)
-
-def version_define_copts():
-    return ["-DGAPID_VERSION_AND_BUILD=\\\"" + version() + "\\\""]
 
 def _gapid_version(ctx):
     ctx.actions.expand_template(
@@ -45,8 +39,13 @@ def _gapid_version(ctx):
 gapid_version = rule(
     implementation=_gapid_version,
     attrs = {
-        "template": attr.label(mandatory = True, allow_files = True, single_file = True),
-        "out": attr.output(mandatory = True),
+        "template": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+        ),
+        "out": attr.output(
+            mandatory = True,
+        ),
     },
     output_to_genfiles = True,
 )

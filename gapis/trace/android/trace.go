@@ -104,7 +104,7 @@ func (t *androidTracer) TraceConfiguration(ctx context.Context) (*service.Device
 	if len(t.b.Instance().GetConfiguration().GetDrivers().GetVulkan().GetPhysicalDevices()) > 0 {
 		apis = append(apis, tracer.VulkanTraceOptions())
 	}
-	if t.b.Instance().SupportsPerfetto() {
+	if t.b.SupportsPerfetto(ctx) {
 		apis = append(apis, tracer.PerfettoTraceOptions())
 	}
 
@@ -472,12 +472,6 @@ func (t *androidTracer) SetupTrace(ctx context.Context, o *service.TraceOptions)
 				return ret, nil, err
 			}
 		}
-	}
-
-	if wasScreenOn, _ := t.b.IsScreenOn(ctx); !wasScreenOn {
-		cleanup = cleanup.Then(func(ctx context.Context) {
-			t.b.TurnScreenOff(ctx)
-		})
 	}
 
 	var process tracer.Process

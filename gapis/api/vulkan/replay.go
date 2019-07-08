@@ -715,6 +715,7 @@ type timestampsConfig struct {
 }
 
 type timestampsRequest struct {
+	handler service.TimeStampsHandler
 }
 
 // uniqueConfig returns a replay.Config that is guaranteed to be unique.
@@ -776,7 +777,6 @@ func (a API) Replay(
 	injector := &transform.Injector{}
 	// Gathers and reports any issues found.
 	var issues *findIssues
-
 	var timestamps *queryTimestamps
 
 	earlyTerminator, err := NewVulkanTerminator(ctx, intent.Capture)
@@ -864,7 +864,7 @@ func (a API) Replay(
 				if err != nil {
 					return err
 				}
-				timestamps = newQueryTimestamps(ctx, c, n)
+				timestamps = newQueryTimestamps(ctx, c, n, cmds, req.handler)
 			}
 			timestamps.reportTo(rr.Result)
 			optimize = false
@@ -932,6 +932,21 @@ func (a API) Replay(
 			}
 			profile.AddResult(rr.Result)
 			optimize = false
+			if req.overrides.GetViewportSize() {
+				transforms.Add(minimizeViewport(ctx))
+			}
+			if req.overrides.GetTextureSize() {
+				transforms.Add(minimizeTextures(ctx))
+			}
+			if req.overrides.GetSampling() {
+				transforms.Add(simplifySampling(ctx))
+			}
+			if req.overrides.GetFragmentShader() {
+				transforms.Add(simplifyFragmentShader(ctx))
+			}
+			if req.overrides.GetVertexCount() {
+				transforms.Add(setPrimitiveCountToOne(ctx))
+			}
 		}
 	}
 
@@ -1095,17 +1110,18 @@ func (a API) QueryTimestamps(
 	ctx context.Context,
 	intent replay.Intent,
 	mgr replay.Manager,
-	hints *service.UsageHints) ([]replay.Timestamp, error) {
+	handler service.TimeStampsHandler,
+	hints *service.UsageHints) error {
 
-	c, r := timestampsConfig{}, timestampsRequest{}
-	res, err := mgr.Replay(ctx, intent, c, r, a, hints)
+	c, r := timestampsConfig{}, timestampsRequest{handler: handler}
+	_, err := mgr.Replay(ctx, intent, c, r, a, hints)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if _, ok := mgr.(replay.Exporter); ok {
-		return nil, nil
+		return nil
 	}
-	return res.([]replay.Timestamp), nil
+	return nil
 }
 
 func (a API) Profile(

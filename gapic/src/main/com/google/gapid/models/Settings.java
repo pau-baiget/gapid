@@ -56,15 +56,16 @@ public class Settings {
   public Point windowLocation = null;
   public Point windowSize = null;
   public boolean hideScrubber = false;
-  public boolean hideLeft = false;
-  public boolean hideRight = false;
   public int splitterTopHeight = 200;
-  public String[] leftTabs = new String[0], centerTabs = new String[0], rightTabs = new String[0];
+  public int[] tabWeights = new int[] { 1, 3, 1 };
+  public String tabStructure = "g3;f1;f1;f2"; // See GraphicsTraceView.MainTab.getFolders().
+  public String[] tabs = new String[] { "ApiCalls", "Framebuffer", "ApiState", "Memory" };
   public String[] hiddenTabs = new String[] { "Log" };
-  public double[] tabWeights = new double[] { 0.2, 0.6, 0.2 };
   public String lastOpenDir = "";
+  public int[] programTreeSplitterWeights = new int[] { 20, 80 };
+  public int[] programUniformsSplitterWeights = new int[] { 70, 30 };
   public int[] reportSplitterWeights = new int[] { 75, 25 };
-  public int[] shaderSplitterWeights = new int[] { 70, 30 };
+  public int[] shaderTreeSplitterWeights = new int[] { 20, 80 };
   public int[] texturesSplitterWeights = new int[] { 20, 80 };
   public String traceDevice = "";
   public String traceType = "Graphics";
@@ -204,19 +205,20 @@ public class Settings {
     windowLocation = getPoint(properties, "window.pos");
     windowSize = getPoint(properties, "window.size");
     hideScrubber = getBoolean(properties, "hide.scrubber", hideScrubber);
-    hideLeft = getBoolean(properties, "hide.left", hideLeft);
-    hideRight = getBoolean(properties, "hide.right", hideRight);
     splitterTopHeight = getInt(properties, "splitter.topHeight", splitterTopHeight);
-    leftTabs = getStringList(properties, "tabs.left", leftTabs);
-    centerTabs = getStringList(properties, "tabs.center", centerTabs);
-    rightTabs = getStringList(properties, "tabs.right", rightTabs);
+    tabs = getStringList(properties, "tabs", tabs);
+    tabWeights = getIntList(properties, "tabs.iweights", tabWeights);
+    tabStructure = properties.getProperty("tabs.structure", tabStructure);
     hiddenTabs = getStringList(properties, "tabs.hidden", hiddenTabs);
-    tabWeights = getDoubleList(properties, "tabs.weights", tabWeights);
     lastOpenDir = properties.getProperty("lastOpenDir", lastOpenDir);
+    programTreeSplitterWeights =
+        getIntList(properties, "programTree.splitter.weights", programTreeSplitterWeights);
+    programUniformsSplitterWeights =
+        getIntList(properties, "programUniforms.splitter.weights", programUniformsSplitterWeights);
     reportSplitterWeights =
         getIntList(properties, "report.splitter.weights", reportSplitterWeights);
-    shaderSplitterWeights =
-        getIntList(properties, "shader.splitter.weights", shaderSplitterWeights);
+    shaderTreeSplitterWeights =
+        getIntList(properties, "shaderTree.splitter.weights", shaderTreeSplitterWeights);
     texturesSplitterWeights =
         getIntList(properties, "texture.splitter.weights", texturesSplitterWeights);
     traceDevice = properties.getProperty("trace.device", traceDevice);
@@ -254,17 +256,16 @@ public class Settings {
     setPoint(properties, "window.pos", windowLocation);
     setPoint(properties, "window.size", windowSize);
     properties.setProperty("hide.scrubber", Boolean.toString(hideScrubber));
-    properties.setProperty("hide.left", Boolean.toString(hideLeft));
-    properties.setProperty("hide.right", Boolean.toString(hideRight));
     properties.setProperty("splitter.topHeight", Integer.toString(splitterTopHeight));
-    setStringList(properties, "tabs.left", leftTabs);
-    setStringList(properties, "tabs.center", centerTabs);
-    setStringList(properties, "tabs.right", rightTabs);
+    setStringList(properties, "tabs", tabs);
+    setIntList(properties, "tabs.iweights", tabWeights);
+    properties.setProperty("tabs.structure", tabStructure);
     setStringList(properties, "tabs.hidden", hiddenTabs);
-    setDoubleList(properties, "tabs.weights", tabWeights);
     properties.setProperty("lastOpenDir", lastOpenDir);
+    setIntList(properties, "programTree.splitter.weights", programTreeSplitterWeights);
+    setIntList(properties, "programUniforms.splitter.weights", programUniformsSplitterWeights);
     setIntList(properties, "report.splitter.weights", reportSplitterWeights);
-    setIntList(properties, "shader.splitter.weights", shaderSplitterWeights);
+    setIntList(properties, "shaderTree.splitter.weights", shaderTreeSplitterWeights);
     setIntList(properties, "texture.splitter.weights", texturesSplitterWeights);
     properties.setProperty("trace.device", traceDevice);
     properties.setProperty("trace.type", traceType);
@@ -350,21 +351,6 @@ public class Settings {
     }
   }
 
-  private static double[] getDoubleList(Properties properties, String name, double[] dflt) {
-    String value = properties.getProperty(name);
-    if (value == null) {
-      return dflt;
-    }
-
-    try {
-      return stream(Splitter.on(',').split(value).spliterator(), false)
-          .mapToDouble(Double::parseDouble)
-          .toArray();
-    } catch (NumberFormatException e) {
-      return dflt;
-    }
-  }
-
   private static String[] getStringList(Properties properties, String name, String[] dflt) {
     String value = properties.getProperty(name);
     if (value == null) {
@@ -383,10 +369,6 @@ public class Settings {
   }
 
   private static void setIntList(Properties properties, String name, int[] value) {
-    properties.setProperty(name, stream(value).mapToObj(String::valueOf).collect(joining(",")));
-  }
-
-  private static void setDoubleList(Properties properties, String name, double[] value) {
     properties.setProperty(name, stream(value).mapToObj(String::valueOf).collect(joining(",")));
   }
 

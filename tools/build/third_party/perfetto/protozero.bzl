@@ -19,7 +19,7 @@ def _path_ignoring_repository(f):
 
 def _gen_cc_impl(ctx):
   protos = [f for dep in ctx.attr.deps for f in dep.proto.direct_sources]
-  includes = [f for dep in ctx.attr.deps for f in dep.proto.transitive_imports]
+  includes = [f for dep in ctx.attr.deps for f in dep.proto.transitive_imports.to_list()]
   proto_root = ""
   if ctx.label.workspace_root:
     proto_root = "/" + ctx.label.workspace_root
@@ -48,11 +48,13 @@ def _gen_cc_impl(ctx):
       arguments += ["--proto_path=."]
   arguments += [proto.path for proto in protos]
 
-  ctx.action(
-    inputs = protos + includes + [ctx.executable._plugin],
+  ctx.actions.run(
+    inputs = protos + includes,
     outputs = out_files,
+    tools =  [ctx.executable._protoc, ctx.executable._plugin],
     executable = ctx.executable._protoc,
     arguments = arguments,
+    use_default_shell_env = True,
   )
 
   return [
@@ -67,7 +69,7 @@ _gen_cc = rule(
     attrs = {
         "deps": attr.label_list(
             mandatory = True,
-            non_empty = True,
+            allow_empty = False,
             providers = ["proto"],
         ),
         "_protoc": attr.label(

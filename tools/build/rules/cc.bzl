@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@gapid//:version.bzl", "version_define_copts")
 load("@gapid//tools/build/rules:common.bzl", "copy_exec")
 load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
 
@@ -26,7 +25,7 @@ _ANDROID_COPTS = [
 
 # This should probably all be done by fixing the toolchains...
 def cc_copts():
-    return version_define_copts() + ["-Werror"] + select({
+    return ["-Werror"] + select({
         "@gapid//tools/build:linux": ["-DTARGET_OS_LINUX"],
         "@gapid//tools/build:darwin": ["-DTARGET_OS_OSX"],
         "@gapid//tools/build:windows": ["-DTARGET_OS_WINDOWS"],
@@ -47,7 +46,7 @@ def _strip_impl(ctx):
         extension = "." + extension
     if ctx.label.name.endswith(extension):
         extension = ""
-    out = ctx.new_file(ctx.label.name + extension)
+    out = ctx.actions.declare_file(ctx.label.name + extension)
 
     flags = []
     cc_toolchain = find_cpp_toolchain(ctx)
@@ -55,6 +54,8 @@ def _strip_impl(ctx):
         flags = ["--strip-unneeded", "-p"]
     elif cc_toolchain.cpu == "darwin_x86_64":
         flags = ["-x"]
+    elif cc_toolchain.cpu == "darwin":
+        fail("Please install Xcode and setup the path using xcode-select. You need Xcode, the CLI tools are not enough.")
     else:
         fail("Unhandled CPU type in strip rule: " + cc_toolchain.cpu)
 
@@ -93,7 +94,7 @@ strip = rule(
 # a symbol dump file that can be uploaded to the crash server to symbolize
 # stack traces of uploaded crash dumps.
 def _symbols_impl(ctx):
-    out = ctx.new_file(ctx.label.name)
+    out = ctx.actions.declare_file(ctx.label.name)
     bin = ctx.file.src
     cc_toolchain = find_cpp_toolchain(ctx)
     if cc_toolchain.cpu.startswith("darwin"):
@@ -123,8 +124,7 @@ _symbols = rule(
     _symbols_impl,
     attrs = {
         "src": attr.label(
-            allow_files = True,
-            single_file = True,
+            allow_single_file = True,
         ),
         "_dump_syms": attr.label(
             executable = True,

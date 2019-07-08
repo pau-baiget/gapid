@@ -6,7 +6,7 @@ permalink: /cli/
 order: 50
 ---
 
-The GAPID package contains a command line tool named `gapit` that  can be used
+The GAPID LOL package contains a command line tool named `gapit` that  can be used
 to capture, replay and query traces from the command line. You can find the
 `gapit` executable in your GAPID install location. The default install location
 varies by platform:

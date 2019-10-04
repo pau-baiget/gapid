@@ -74,3 +74,7 @@ func (l statusLogger) OnEvent(ctx context.Context, t *Task, n string, s EventSco
 func (l statusLogger) OnMemorySnapshot(ctx context.Context, stats runtime.MemStats) {
 	log.I(ctx, "Memory %+v bytes", stats.Alloc)
 }
+
+func (l statusLogger) OnReplayStatusUpdate(ctx context.Context, r *Replay, label uint64, totalInstrs, finishedInstrs uint32) {
+	log.I(ctx, "Replay Status: started: %v finished: %v label: %v, total instructions: %v, finished instructions: %v.", r.Started(), r.Finished(), label, totalInstrs, finishedInstrs)
+}

@@ -126,6 +126,10 @@ public interface Theme {
   @RGB(argb = 0xff0000ff) public Color numericConstantColor();
   @RGB(argb = 0xff808000) public Color preprocessorColor();
 
+  // Memory view colors.
+  @RGB(argb = 0xff0068da) public Color memoryLinkColor();
+  @RGB(argb = 0xffe5f3ff) public Color memoryFirstLevelBackground();
+
   // Memory highlighting (background) colors.
   @RGB(argb = 0xffdcfadc) public Color memoryReadHighlight();
   @RGB(argb = 0xfffadcdc) public Color memoryWriteHighlight();
@@ -133,7 +137,7 @@ public interface Theme {
 
   // About & Welcome dialog text colors
   @RGB(argb = 0xffa9a9a9) public Color welcomeVersionColor();
-  @RGB(argb = 0xffa9a9a9) public Color shortcutKeyHintColor();
+  @RGB(argb = 0xffbcdbff) public Color welcomeHoverColor();
 
   // Logging view colors by log level.
   @RGB(argb = 0xbb000000) public Color logVerboseForeground();
@@ -171,6 +175,9 @@ public interface Theme {
   @RGB(argb = 0xfffbfbfd) public Color tabFolderSelected();
   @RGB(argb = 0xffd1e3f7) public Color tabFolderPlaceholderFill();
   @RGB(argb = 0xff4a90e2) public Color tabFolderPlaceholderStroke();
+
+  @RGB(argb = 0xfff00000) public Color missingInput();
+  @RGB(argb = 0xf0000000) public Color filledInput();
 
   @TextStyle(foreground = 0xa9a9a9) public Styler structureStyler();
   @TextStyle(foreground = 0x0000ee) public Styler identifierStyler();

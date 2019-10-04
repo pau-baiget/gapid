@@ -15,13 +15,17 @@
  */
 package com.google.gapid.perfetto.views;
 
+import static com.google.gapid.perfetto.TimeSpan.timeToString;
 import static com.google.gapid.perfetto.views.Loading.drawLoading;
+import static com.google.gapid.perfetto.views.StyleConstants.TRACK_MARGIN;
 import static com.google.gapid.perfetto.views.StyleConstants.colorForThread;
 import static com.google.gapid.perfetto.views.StyleConstants.colors;
 
 import com.google.gapid.perfetto.TimeSpan;
 import com.google.gapid.perfetto.canvas.Area;
+import com.google.gapid.perfetto.canvas.Fonts;
 import com.google.gapid.perfetto.canvas.RenderContext;
+import com.google.gapid.perfetto.canvas.Size;
 import com.google.gapid.perfetto.models.CpuTrack;
 import com.google.gapid.perfetto.models.ProcessSummaryTrack;
 import com.google.gapid.perfetto.models.ThreadInfo;
@@ -37,11 +41,13 @@ public class ProcessSummaryPanel extends TrackPanel {
   private static final double HEIGHT = 50;
   private static final double HOVER_MARGIN = 10;
   private static final double HOVER_PADDING = 4;
+  private static final double CURSOR_SIZE = 5;
 
   private final ProcessSummaryTrack track;
   protected double mouseXpos;
   protected ThreadInfo.Display hoveredThread;
   protected double hoveredWidth;
+  protected HoverCard hovered;
 
   public ProcessSummaryPanel(State state, ProcessSummaryTrack track) {
     super(state);
@@ -57,6 +63,11 @@ public class ProcessSummaryPanel extends TrackPanel {
   public String getSubTitle() {
     int count = track.getProcess().utids.size();
     return count + " Thread" + (count == 1 ? "" : "s");
+  }
+
+  @Override
+  public String getTooltip() {
+    return "\\b" + getTitle() + "\n" + getSubTitle();
   }
 
   @Override
@@ -87,10 +98,11 @@ public class ProcessSummaryPanel extends TrackPanel {
       RenderContext ctx, ProcessSummaryTrack.Data data, double w, double h) {
     // TODO: dedupe with CpuRenderer
     long tStart = data.request.range.start;
+    int start = Math.max(0, (int)((state.getVisibleTime().start - tStart) / data.bucketSize));
+
     ctx.setBackgroundColor(colors().cpuUsageFill);
     ctx.setForegroundColor(colors().cpuUsageStroke);
     ctx.path(path -> {
-      int start = Math.max(0, (int)((state.getVisibleTime().start - tStart) / data.bucketSize));
       path.moveTo(0, h);
       double y = h, x = 0;
       for (int i = start; i < data.utilizations.length && x < w; i++) {
@@ -105,6 +117,21 @@ public class ProcessSummaryPanel extends TrackPanel {
       ctx.fillPath(path);
       ctx.drawPath(path);
     });
+
+    if (hovered != null && hovered.bucket >= start) {
+      double x = state.timeToPx(tStart + hovered.bucket * data.bucketSize + data.bucketSize / 2);
+      if (x < w) {
+        double dx = HOVER_PADDING + hovered.size.w + HOVER_PADDING;
+        double dy = HOVER_PADDING + hovered.size.h + HOVER_PADDING;
+        ctx.setBackgroundColor(colors().hoverBackground);
+        ctx.fillRect(x + HOVER_MARGIN, h - HOVER_PADDING - dy, dx, dy);
+        ctx.setForegroundColor(colors().textMain);
+        ctx.drawText(Fonts.Style.Normal, hovered.text, x + HOVER_MARGIN + HOVER_PADDING, h - dy);
+
+        ctx.setForegroundColor(colors().textMain);
+        ctx.drawCircle(x, h * (1 - hovered.utilization), CURSOR_SIZE / 2);
+      }
+    }
   }
 
   private void renderSlices(RenderContext ctx, ProcessSummaryTrack.Data data, double h) {
@@ -134,21 +161,31 @@ public class ProcessSummaryPanel extends TrackPanel {
       ctx.fillRect(mouseXpos + HOVER_MARGIN, 0, hoveredWidth + 2 * HOVER_PADDING, h);
 
       ctx.setForegroundColor(colors().textMain);
-      ctx.drawText(hoveredThread.title, mouseXpos + HOVER_MARGIN + HOVER_PADDING, 2, (h / 2) - 4);
+      ctx.drawText(Fonts.Style.Normal, hoveredThread.title,
+          mouseXpos + HOVER_MARGIN + HOVER_PADDING, 2, (h / 2) - 4);
       if (!hoveredThread.subTitle.isEmpty()) {
-        ctx.drawText(hoveredThread.subTitle,
+        ctx.drawText(Fonts.Style.Normal, hoveredThread.subTitle,
             mouseXpos + HOVER_MARGIN + HOVER_PADDING, (h / 2) + 2, (h / 2) - 4);
       }
     }
   }
 
   @Override
-  public Hover onTrackMouseMove(TextMeasurer m, double x, double y) {
+  public Hover onTrackMouseMove(Fonts.TextMeasurer m, double x, double y) {
     ProcessSummaryTrack.Data data = track.getData(state, () -> { /* nothing */ });
-    if (data == null || data.kind == ProcessSummaryTrack.Data.Kind.summary) {
+    if (data == null) {
       return Hover.NONE;
     }
 
+    switch (data.kind) {
+      case slice: return sliceHover(data, m, x, y);
+      case summary: return summaryHover(data, m, x);
+      default: return Hover.NONE;
+    }
+  }
+
+  private Hover sliceHover(
+      ProcessSummaryTrack.Data data, Fonts.TextMeasurer m, double x, double y) {
     int cpu = (int)(y * state.getData().numCpus / HEIGHT);
     if (cpu < 0 || cpu >= state.getData().numCpus) {
       return Hover.NONE;
@@ -162,8 +199,9 @@ public class ProcessSummaryPanel extends TrackPanel {
         if (hoveredThread == null) {
           return Hover.NONE;
         }
-        hoveredWidth =
-            Math.max(m.measure(hoveredThread.title).w, m.measure(hoveredThread.subTitle).w);
+        hoveredWidth = Math.max(
+            m.measure(Fonts.Style.Normal, hoveredThread.title).w,
+            m.measure(Fonts.Style.Normal, hoveredThread.subTitle).w);
         long id = data.ids[i];
 
         return new Hover() {
@@ -192,5 +230,48 @@ public class ProcessSummaryPanel extends TrackPanel {
       }
     }
     return Hover.NONE;
+  }
+
+  private Hover summaryHover(ProcessSummaryTrack.Data data, Fonts.TextMeasurer m, double x) {
+    long time = state.pxToTime(x);
+    int bucket = (int)((time - data.request.range.start) / data.bucketSize);
+    if (bucket < 0 || bucket >= data.utilizations.length) {
+      return Hover.NONE;
+    }
+
+    double p = data.utilizations[bucket];
+    String text = (int)(p * 100) + "% (" +
+        timeToString(Math.round(p * data.bucketSize)) + " / " + timeToString(data.bucketSize) + ")";
+    hovered = new HoverCard(bucket, p, text, m.measure(Fonts.Style.Normal, text));
+
+    double mouseX = state.timeToPx(
+        data.request.range.start + hovered.bucket * data.bucketSize + data.bucketSize / 2);
+    double dx = HOVER_PADDING + hovered.size.w + HOVER_PADDING;
+    double dy = height;
+    return new Hover() {
+      @Override
+      public Area getRedraw() {
+        return new Area(mouseX - CURSOR_SIZE, -TRACK_MARGIN, CURSOR_SIZE + HOVER_MARGIN + dx, dy);
+      }
+
+      @Override
+      public void stop() {
+        hovered = null;
+      }
+    };
+  }
+
+  private static class HoverCard {
+    public final int bucket;
+    public final double utilization;
+    public final String text;
+    public final Size size;
+
+    public HoverCard(int bucket, double utilization, String text, Size size) {
+      this.bucket = bucket;
+      this.utilization = utilization;
+      this.text = text;
+      this.size = size;
+    }
   }
 }

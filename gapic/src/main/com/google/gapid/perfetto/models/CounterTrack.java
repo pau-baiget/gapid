@@ -43,24 +43,17 @@ public class CounterTrack extends Track<CounterTrack.Data> {
   private static final String RANGE_SQL =
       "select ts, ts + dur, value from %s " +
       "where ts + dur >= %d and ts <= %d order by ts";
+  private static final long QUANTIZE_CUT_OFF = 10000;
 
-  private final long id;
-  private final double min;
-  private final double max;
+  private final CounterInfo counter;
 
-  public CounterTrack(long id, double min, double max) {
-    super("counter_" + id);
-    this.id = id;
-    this.min = min;
-    this.max = max;
+  public CounterTrack(CounterInfo counter) {
+    super("counter_" + counter.id);
+    this.counter = counter;
   }
 
-  public double getMin() {
-    return min;
-  }
-
-  public double getMax() {
-    return max;
+  public CounterInfo getCounter() {
+    return counter;
   }
 
   @Override
@@ -78,18 +71,22 @@ public class CounterTrack extends Track<CounterTrack.Data> {
   }
 
   private String viewSql() {
-    return format(VIEW_SQL, id);
+    return format(VIEW_SQL, counter.id);
   }
 
   @Override
   protected ListenableFuture<Data> computeData(QueryEngine qe, DataRequest req) {
-    Window win = Window.compute(req, 5);
+    Window win = (counter.count > QUANTIZE_CUT_OFF) ? Window.compute(req, 5) : Window.compute(req);
     return transformAsync(win.update(qe, tableName("window")), $ -> computeData(qe, req, win));
   }
 
   private ListenableFuture<Data> computeData(QueryEngine qe, DataRequest req, Window win) {
     return transform(qe.query(win.quantized ? summarySql() : counterSQL()), res -> {
       int rows = res.getNumRows();
+      if (rows == 0) {
+        return Data.empty(req);
+      }
+
       Data data = new Data(req, new long[rows + 1], new double[rows + 1]);
       res.forEachRow((i, r) -> {
         data.ts[i] = r.getLong(0);
@@ -134,6 +131,10 @@ public class CounterTrack extends Track<CounterTrack.Data> {
       this.ts = ts;
       this.values = values;
     }
+
+    public static Data empty(DataRequest req) {
+      return new Data(req, new long[0], new double[0]);
+    }
   }
 
   public static class Values implements Selection, Selection.CombiningBuilder.Combinable<Values> {
@@ -165,6 +166,12 @@ public class CounterTrack extends Track<CounterTrack.Data> {
 
     @Override
     public Values combine(Values other) {
+      if (ts.length == 0) {
+        return other;
+      } else if (other.ts.length == 0) {
+        return this;
+      }
+
       long[] newTs = combineTs(ts, other.ts);
 
       double[][] newValues = new double[names.length + other.names.length][newTs.length];

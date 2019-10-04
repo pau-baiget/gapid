@@ -48,12 +48,18 @@ bool asset_read(AAsset *asset, void *buf, size_t count) {
   return true;
 }
 
-// touch pages will touch all memory pages for a given memory span
+// touch_pages will write at least one 0 onto every page in the given memory
+// span
 void touch_pages(void *addr, uint32_t size) {
-  long pagesize = sysconf(_SC_PAGESIZE);
+  static const long pagesize = sysconf(_SC_PAGESIZE);
   char *end = ((char *)addr) + size;
   for (char *p = (char *)addr; p < end; p += pagesize) {
     *p = '0';
+  }
+  // Make sure the last page is touched, as the loop may exit without touching
+  // it when p lands in the last page to touch, but beyond end.
+  if (size > 0) {
+    *(end - 1) = '0';
   }
 }
 
@@ -112,15 +118,14 @@ bool AssetResourceCache::putCache(const Resource &resource, const void *data) {
 }
 
 bool AssetResourceCache::hasCache(const Resource &resource) {
-  return (mRecords.find(resource.id) != mRecords.end());
+  return (mRecords.find(resource.getID()) != mRecords.end());
 }
 
 bool AssetResourceCache::loadCache(const Resource &resource, void *data) {
-  std::unordered_map<std::string, AssetRecord>::const_iterator it;
-  it = mRecords.find(resource.id);
+  std::unordered_map<std::string, AssetRecord>::const_iterator it =
+      mRecords.find(resource.getID());
   if (it == mRecords.end()) {
-    GAPID_FATAL("AssetResourceCache::loadCache() cannot find resource: %s",
-                resource.id.c_str());
+    return false;
   }
 
   AssetRecord record = it->second;

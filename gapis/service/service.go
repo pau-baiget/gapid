@@ -29,8 +29,10 @@ import (
 	"github.com/google/gapid/gapis/memory"
 	perfetto "github.com/google/gapid/gapis/perfetto/service"
 	"github.com/google/gapid/gapis/service/box"
+	"github.com/google/gapid/gapis/service/memory_box"
 	"github.com/google/gapid/gapis/service/path"
 	"github.com/google/gapid/gapis/service/severity"
+	"github.com/google/gapid/gapis/service/types"
 	"github.com/google/gapid/gapis/stringtable"
 )
 
@@ -124,6 +126,11 @@ type Service interface {
 	// the base changed to refer to the new capture.
 	Set(ctx context.Context, p *path.Any, v interface{}, c *path.ResolveConfig) (*path.Any, error)
 
+	// Delete creates a copy of the capture referenced by p, but without the object, value
+	// or memory at p. The path returned is identical to p, but with
+	// the base changed to refer to the new capture.
+	Delete(ctx context.Context, p *path.Any, c *path.ResolveConfig) (*path.Any, error)
+
 	// Follow returns the path to the object that the value at p links to.
 	// If the value at p does not link to anything then nil is returned.
 	Follow(ctx context.Context, p *path.Any, c *path.ResolveConfig) (*path.Any, error)
@@ -141,7 +148,8 @@ type Service interface {
 		snapshotInterval time.Duration,
 		statusUpdateFrequency time.Duration,
 		f func(*TaskUpdate),
-		m func(*MemoryStatus)) error
+		m func(*MemoryStatus),
+		r func(*ReplayUpdate)) error
 
 	// GetPerformanceCounters returns the values of all global counters as
 	// a string.
@@ -254,8 +262,8 @@ func NewValue(v interface{}) *Value {
 		return &Value{Val: &Value_Events{v}}
 	case *Memory:
 		return &Value{Val: &Value_Memory{v}}
-	case *path.Any:
-		return &Value{Val: &Value_Path{v}}
+	case *memory_box.Value:
+		return &Value{Val: &Value_MemoryBox{v}}
 	case path.Node:
 		return &Value{Val: &Value_Path{v.Path()}}
 	case *Report:
@@ -286,6 +294,8 @@ func NewValue(v interface{}) *Value {
 		return &Value{Val: &Value_MultiResourceData{v}}
 	case *DeviceTraceConfiguration:
 		return &Value{Val: &Value_TraceConfig{v}}
+	case *types.Type:
+		return &Value{Val: &Value_Type{v}}
 
 	default:
 		if v := box.NewValue(v); v != nil {
@@ -302,6 +312,8 @@ func (v *Value) Get() interface{} {
 		return nil
 	case *Value_Box:
 		return v.Box.Get()
+	case *Value_MemoryBox:
+		return v.MemoryBox
 	default:
 		return protoutil.OneOf(v)
 	}

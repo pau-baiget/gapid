@@ -15,6 +15,13 @@
  */
 package com.google.gapid.perfetto;
 
+import static com.google.gapid.perfetto.views.StyleConstants.KB_DELAY;
+import static com.google.gapid.perfetto.views.StyleConstants.KB_PAN_FAST;
+import static com.google.gapid.perfetto.views.StyleConstants.KB_PAN_SLOW;
+import static com.google.gapid.perfetto.views.StyleConstants.KB_ZOOM_FAST;
+import static com.google.gapid.perfetto.views.StyleConstants.KB_ZOOM_SLOW;
+import static com.google.gapid.perfetto.views.StyleConstants.ZOOM_FACTOR_SCALE;
+
 import com.google.gapid.models.Capture;
 import com.google.gapid.models.Models;
 import com.google.gapid.models.Perfetto;
@@ -23,14 +30,17 @@ import com.google.gapid.perfetto.canvas.PanelCanvas;
 import com.google.gapid.perfetto.views.RootPanel;
 import com.google.gapid.perfetto.views.SelectionView;
 import com.google.gapid.perfetto.views.State;
+import com.google.gapid.util.Keyboard;
 import com.google.gapid.util.Loadable;
 import com.google.gapid.widgets.LoadablePanel;
 import com.google.gapid.widgets.Widgets;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
+import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Event;
 import org.eclipse.swt.widgets.ScrollBar;
 
 /**
@@ -38,8 +48,6 @@ import org.eclipse.swt.widgets.ScrollBar;
  */
 public class TraceView extends Composite
     implements Capture.Listener, Perfetto.Listener, State.Listener {
-  private static final double ZOOM_FACTOR_SCALE = 0.05;
-
   private final Models models;
   private final State state;
   private final LoadablePanel<SashForm> loading;
@@ -63,22 +71,59 @@ public class TraceView extends Composite
     canvas.addListener(SWT.MouseWheel, e -> {
       if ((e.stateMask & SWT.MODIFIER_MASK) == SWT.MOD1) {
         e.doit = false;
-        if (rootPanel.zoom(e.x, Math.max(-3, Math.min(3, e.count)) * ZOOM_FACTOR_SCALE)) {
-          canvas.redraw(Area.FULL);
+        if (rootPanel.zoom(e.x, 1.0 - Math.max(-3, Math.min(3, e.count)) * ZOOM_FACTOR_SCALE)) {
+          canvas.redraw(Area.FULL, true);
         }
       }
     });
     canvas.addListener(SWT.MouseHorizontalWheel, e -> {
-      e.doit = false;
+      if ((e.stateMask & SWT.MODIFIER_MASK) == SWT.MOD1) {
+        // Ignore horizontal scroll, only when zooming.
+        e.doit = false;
+      }
     });
+    canvas.addListener(SWT.Gesture, this::handleGesture);
     canvas.getHorizontalBar().addListener(SWT.Selection, e -> {
       TimeSpan trace = state.getTraceTime();
       int sel = canvas.getHorizontalBar().getSelection();
-      if (state.scrollTo(trace.start + sel * trace.getDuration() / 1000)) {
-        canvas.redraw(Area.FULL);
+      if (state.scrollToX(trace.start + sel * trace.getDuration() / 10000)) {
+        canvas.redraw(Area.FULL, true);
       }
     });
-    updateScrollbar();
+    canvas.getVerticalBar().addListener(SWT.Selection, e -> {
+      int sel = canvas.getVerticalBar().getSelection();
+      if (state.scrollToY(sel)) {
+        canvas.redraw(Area.FULL, true);
+      }
+    });
+    new Keyboard(canvas, KB_DELAY, kb -> {
+      boolean redraw = false;
+      boolean fast = kb.isKeyDown(SWT.SHIFT);
+      if (kb.isKeyDown('a') || kb.isKeyDown(SWT.ARROW_LEFT)) {
+        redraw = state.dragX(state.getVisibleTime(), fast ? KB_PAN_FAST : KB_PAN_SLOW) || redraw;
+      } else if (kb.isKeyDown('d') || kb.isKeyDown(SWT.ARROW_RIGHT)) {
+        redraw = state.dragX(state.getVisibleTime(), -(fast ? KB_PAN_FAST : KB_PAN_SLOW)) || redraw;
+      }
+
+      if (kb.isKeyDown('w') || kb.isKeyDown(SWT.ARROW_UP)) {
+        redraw = state.dragY(fast ? KB_PAN_FAST : KB_PAN_SLOW) || redraw;
+      } else if (kb.isKeyDown('s') || kb.isKeyDown(SWT.ARROW_DOWN)) {
+        redraw = state.dragY(-(fast ? KB_PAN_FAST : KB_PAN_SLOW)) || redraw;
+      }
+
+      if (kb.isKeyDown('q')) {
+        Point mouse = canvas.toControl(getDisplay().getCursorLocation());
+        redraw = rootPanel.zoom(mouse.x, 1.0 - (fast ? KB_ZOOM_FAST : KB_ZOOM_SLOW)) || redraw;
+      } else if (kb.isKeyDown('e')) {
+        Point mouse = canvas.toControl(getDisplay().getCursorLocation());
+        redraw = rootPanel.zoom(mouse.x, 1.0 + (fast ? KB_ZOOM_FAST : KB_ZOOM_SLOW)) || redraw;
+      }
+
+      if (redraw) {
+        canvas.redraw(Area.FULL, true);
+      }
+    });
+    updateScrollbars();
 
     models.capture.addListener(this);
     models.perfetto.addListener(this);
@@ -100,7 +145,7 @@ public class TraceView extends Composite
     if (!maintainState) {
       rootPanel.clear();
     }
-    updateScrollbar();
+    updateScrollbars();
   }
 
   @Override
@@ -124,15 +169,37 @@ public class TraceView extends Composite
       state.update(models.perfetto.getData());
       canvas.structureHasChanged();
     }
-    updateScrollbar();
+    updateScrollbars();
   }
 
   @Override
-  public void onVisibleTimeChanged() {
-    updateScrollbar();
+  public void onVisibleAreaChanged() {
+    updateScrollbars();
   }
 
-  private void updateScrollbar() {
+  private double lastZoom = 1;
+  private void handleGesture(Event e) {
+    switch (e.detail) {
+      case SWT.GESTURE_BEGIN:
+        lastZoom = 1;
+        break;
+      case SWT.GESTURE_MAGNIFY:
+        if (rootPanel.zoom(e.x, lastZoom / e.magnification)) {
+          canvas.redraw(Area.FULL, true);
+        }
+        lastZoom = e.magnification;
+        break;
+      case SWT.GESTURE_END:
+        break;
+    }
+  }
+
+  private void updateScrollbars() {
+    updateHorizontalBar();
+    updateVerticalBar();
+  }
+
+  private void updateHorizontalBar() {
     ScrollBar bar = canvas.getHorizontalBar();
     if (!models.perfetto.isLoaded()) {
       bar.setEnabled(false);
@@ -142,14 +209,42 @@ public class TraceView extends Composite
 
     TimeSpan visible = state.getVisibleTime();
     TimeSpan total = state.getTraceTime();
-    int sel = permille(visible.start - total.start, total.getDuration());
-    int thumb = permille(visible.getDuration(), total.getDuration());
+    if (total.getDuration() == 0) {
+      bar.setEnabled(false);
+      bar.setValues(0, 0, 1, 1, 5, 10);
+      return;
+    }
+
+    int sel = permyriad(visible.start - total.start, total.getDuration());
+    int thumb = permyriad(visible.getDuration(), total.getDuration());
 
     bar.setEnabled(true);
-    bar.setValues(sel, 0, 1000, thumb, 50, 100);
+    bar.setValues(sel, 0, 10000, thumb, Math.max(1, thumb / 20), 100);
   }
 
-  private static int permille(long v, long t) {
-    return Math.max(0, Math.min(1000, (int)(1000 * v / t)));
+  private void updateVerticalBar() {
+    ScrollBar bar = canvas.getVerticalBar();
+    if (!models.perfetto.isLoaded()) {
+      bar.setEnabled(false);
+      bar.setValues(0, 0, 1, 1, 5, 10);
+      return;
+    }
+
+    double max = state.getMaxScrollOffset();
+    if (max <= 0) {
+      bar.setEnabled(false);
+      bar.setValues(0, 0, 1, 1, 5, 10);
+      return;
+    }
+
+    int h = canvas.getClientArea().height;
+    int sel = (int)state.getScrollOffset();
+
+    bar.setEnabled(true);
+    bar.setValues(sel, 0, (int)(h + max), h, 10, 100);
+  }
+
+  private static int permyriad(long v, long t) {
+    return Math.max(0, Math.min(10000, (int)(10000 * v / t)));
   }
 }

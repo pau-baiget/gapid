@@ -17,15 +17,21 @@ load(":rules.bzl", "gapid_apk")
 _NATIVE_LIBRARIES = {
     "deviceinfo": "//core/os/device/deviceinfo/apk",
     "VkLayer_VirtualSwapchain": "//core/vulkan/vk_virtual_swapchain/apk",
+    "VkLayer_APITiming": "//core/vulkan/vk_api_timing_layer/apk",
     "gapii": "//gapii/apk",
     "interceptor": "//gapii/apk",
     "VkLayer_GraphicsSpy": "//gapii/apk",
     "gapir": "//cmd/gapir/apk",
 }
 
+_NATIVE_BINARIES = {
+    "launch_producer": "//cmd/launch_producer",
+}
+
 gapid_apk(
     name = "armeabi-v7a",
     abi = "armeabi-v7a",
+    bins = _NATIVE_BINARIES,
     libs = _NATIVE_LIBRARIES,
     pkg = "armeabiv7a",
 )
@@ -33,6 +39,7 @@ gapid_apk(
 gapid_apk(
     name = "arm64-v8a",
     abi = "arm64-v8a",
+    bins = _NATIVE_BINARIES,
     libs = _NATIVE_LIBRARIES,
     pkg = "arm64v8a",
 )
@@ -40,6 +47,7 @@ gapid_apk(
 gapid_apk(
     name = "x86",
     abi = "x86",
+    bins = _NATIVE_BINARIES,
     libs = _NATIVE_LIBRARIES,
     pkg = "x86",
 )

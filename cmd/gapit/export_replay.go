@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,6 +56,12 @@ func init() {
 	})
 }
 
+func isPackageNameValid(name string) bool {
+	// See https://developer.android.com/studio/build/application-id
+	packageNameRE := regexp.MustCompile(`^[[:alpha:]][[:word:]]*(\.[[:alpha:]][[:word:]]*)+$`)
+	return packageNameRE.MatchString(name)
+}
+
 func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 	if flags.NArg() != 1 {
 		app.Usage(ctx, "Exactly one gfx trace file expected, got %d", flags.NArg())
@@ -62,9 +69,16 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 	}
 
 	// Early argument check
+	var replayAPK, replayPackage string
 	if verb.Apk != "" {
 		if !strings.HasSuffix(verb.Apk, ".apk") {
 			app.Usage(ctx, "APK name must be a valid Android package name followed by '.apk', e.g. com.example.myapp.replay.apk")
+			return nil
+		}
+		replayAPK = filepath.Base(verb.Apk)
+		replayPackage = strings.TrimSuffix(replayAPK, ".apk")
+		if !isPackageNameValid(replayPackage) {
+			app.Usage(ctx, "APK package name '%s' is invalid, make sure to use alphanum characters and at least one '.' separator, e.g. com.example.myapp.replay.apk (see https://developer.android.com/studio/build/application-id)", replayPackage)
 			return nil
 		}
 		if _, err := os.Stat(verb.Apk); err == nil {
@@ -89,9 +103,12 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 
 	var fbreqs []*service.GetFramebufferAttachmentRequest
 	var tsreq *service.GetTimestampsRequest
+	onscreen := false
 	switch verb.Mode {
 	case ExportPlain, ExportDiagnostics:
 		// It's the default, do nothing.
+	case ExportOnScreen:
+		onscreen = true
 	case ExportFrames:
 		filter, err := verb.CommandFilterFlags.commandFilter(ctx, client, capturePath)
 		if err != nil {
@@ -130,6 +147,7 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 	opts := &service.ExportReplayOptions{
 		GetFramebufferAttachmentRequests: fbreqs,
 		GetTimestampsRequest:             tsreq,
+		DisplayToSurface:                 onscreen,
 	}
 
 	if err := client.ExportReplay(ctx, capturePath, device, verb.Out, opts); err != nil {
@@ -137,9 +155,8 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 	}
 
 	if verb.Apk != "" {
+
 		// Create stand-alone APK
-		replayAPK := filepath.Base(verb.Apk)
-		replayPackage := strings.TrimSuffix(replayAPK, ".apk")
 		log.I(ctx, "Create replay apk: %s with package name %s", replayAPK, replayPackage)
 
 		boxedCapture, err := client.Get(ctx, capturePath.Path(), nil)
@@ -210,7 +227,7 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 			sdkPath = os.ExpandEnv("${ANDROID_SDK_HOME}")
 		}
 		if _, err := os.Stat(sdkPath); err != nil {
-			return err
+			return log.Err(ctx, err, "Cannot find Android SDK. Please set ANDROID_SDK_HOME, or use the -sdkpath flag")
 		}
 		toolsPathParent := path.Join(sdkPath, "build-tools")
 		matches, err := filepath.Glob(path.Join(toolsPathParent, "*"))
@@ -258,6 +275,7 @@ func (verb *exportReplayVerb) Run(ctx context.Context, flags flag.FlagSet) error
 			"classes.dex",
 			path.Join("lib", abi, "libgapir.so"),
 			path.Join("lib", abi, "libVkLayer_VirtualSwapchain.so"),
+			path.Join("lib", abi, "libVkLayer_APITiming.so"),
 		}
 
 		for _, f := range files {

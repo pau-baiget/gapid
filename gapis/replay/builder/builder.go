@@ -75,6 +75,14 @@ const (
 	// The ID needs to be kept in sync with |kIssuesNotificationId| defined in
 	// `gapir/cc/grpc_replay_service.cpp`.
 	IssuesNotificationID = uint64(0)
+	// ReplayProgressNotificationID is the Notification ID reserved for replay
+	// status information transfer.
+	// The ID needs to be kept in sync with |kReplayProgressNotificationID|
+	// defined in `gapir/cc/grpc_replay_service.cpp`.
+	ReplayProgressNotificationID = uint64(1)
+	// The value used to initialize nextNotificationID. Need to be increased as
+	// well when more notification id are reserved for special use.
+	InitialNextNotificationID = uint64(2)
 )
 
 // Postback decodes a single command's post. If err is nil, it means there is
@@ -148,7 +156,7 @@ func New(memoryLayout *device.MemoryLayout, dependent *Builder) *Builder {
 		pointerMemory:       memory.RangeList{},
 		mappedMemory:        mappedMemory,
 		instructions:        []asm.Instruction{},
-		nextNotificationID:  IssuesNotificationID + 1,
+		nextNotificationID:  InitialNextNotificationID,
 		notificationReaders: map[uint64]NotificationReader{},
 		memoryLayout:        memoryLayout,
 		lastLabel:           ^uint64(0),
@@ -574,6 +582,27 @@ func (b *Builder) ReserveMemory(rng memory.Range) {
 	interval.Merge(&b.reservedMemory, rng.Span(), true)
 }
 
+// GetMappedTarget gets current mapped memory's target address pointer in the builder.
+// The input |ptr| is the start of the mapped memory range. Returns the target address
+// on success and error otherwise.
+func (b *Builder) GetMappedTarget(ptr value.Pointer) (value.Pointer, error) {
+	p, ok := ptr.(value.ObservedPointer)
+	if !ok {
+		return ptr, fmt.Errorf("ptr %v is not type of value.ObservedPointer", ptr)
+	}
+
+	idx := interval.IndexOf(&b.mappedMemory, uint64(p))
+	if idx < 0 {
+		return ptr, fmt.Errorf("can not find ptr %v in mappedMemory", ptr)
+	}
+
+	if b.mappedMemory[idx].Range.Base != uint64(p) {
+		return ptr, fmt.Errorf("the ptr %v is not the start of the mapped memory range", ptr)
+	}
+
+	return b.mappedMemory[idx].Target, nil
+}
+
 // MapMemory maps the memory range rng relative to the absolute pointer that is
 // on the top of the stack. Any ObservedPointers that are used while the pointer
 // is mapped will be automatically adjusted to the remapped address.
@@ -584,6 +613,7 @@ func (b *Builder) MapMemory(rng memory.Range) {
 	}
 
 	// Allocate memory to hold the target mapped base address.
+	// Do not release the memory as it may be used during frame loop.
 	target := b.AllocateMemory(uint64(b.memoryLayout.GetPointer().GetSize()))
 	b.Store(target)
 
@@ -642,13 +672,27 @@ func (b *Builder) GetNotificationID() uint64 {
 
 // RegisterNotificationReader registers a notification reader for a specific notificationID. Returns error
 // if the notificationID has already been registered.
-func (b *Builder) RegisterNotificationReader(reader NotificationReader, notificationID uint64) error {
-	fmt.Printf("Regitster notification ID %v", notificationID)
+func (b *Builder) RegisterNotificationReader(notificationID uint64, reader NotificationReader) error {
 	if _, ok := b.notificationReaders[notificationID]; ok {
 		return fmt.Errorf("notificationID %d already registered", notificationID)
 	}
 	b.notificationReaders[notificationID] = reader
 	return nil
+}
+
+// RegisterReplayStatusReader create and register a NotificationReader, which is used to decode and handle
+// replay status information sent from GAPIR.
+func (b *Builder) RegisterReplayStatusReader(ctx context.Context, r *status.Replay) error {
+	reader := func(n gapir.Notification) {
+		s := n.GetReplayStatus()
+		label := s.GetLabel()
+		totalInstrs := s.GetTotalInstrs()
+		finishedInstrs := s.GetFinishedInstrs()
+
+		log.D(ctx, "Replay status: Label: %v; Total instructions: %v; Finished percentage: %v.", label, totalInstrs, float32(finishedInstrs)/float32(totalInstrs))
+		r.Progress(ctx, label, totalInstrs, finishedInstrs)
+	}
+	return b.RegisterNotificationReader(ReplayProgressNotificationID, reader)
 }
 
 // Export compiles the replay instructions, returning a Payload that can be
@@ -759,7 +803,6 @@ func (b *Builder) Build(ctx context.Context) (gapir.Payload, PostDataHandler, No
 	// so that the builder do not need to be kept alive when using these readers.
 	readers := b.notificationReaders
 	handleNotification := func(n *gapir.Notification) {
-		ctx = log.Enter(ctx, "NotificationHandler")
 		if n == nil {
 			log.E(ctx, "Cannot handle nil Notification")
 			return
@@ -769,7 +812,7 @@ func (b *Builder) Build(ctx context.Context) (gapir.Payload, PostDataHandler, No
 			if r, ok := readers[id]; ok {
 				r(*n)
 			} else {
-				log.E(ctx, "Unknown notification received, ID is %d", id)
+				log.W(ctx, "Unknown notification received, ID is %d: %v", id, n)
 			}
 		})
 	}

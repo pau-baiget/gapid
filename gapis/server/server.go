@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -130,13 +129,29 @@ func (s *server) CheckForUpdates(ctx context.Context, includePrereleases bool) (
 	}
 	var mostRecent *service.Release
 	mostRecentVersion := app.Version
+	mostRecentDevVersion := -1
+
 	for _, release := range releases {
 		if !includePrereleases && release.GetPrerelease() {
 			continue
 		}
+
+		// tagName is either:
+		// Regular release: v<major>.<minor>.<point>
+		// Dev pre-release: v<major>.<minor>.<point>-dev-<dev>
 		var version app.VersionSpec
-		fmt.Sscanf(release.GetTagName(), "v%d.%d.%d", &version.Major, &version.Minor, &version.Point)
-		if version.GreaterThan(mostRecentVersion) {
+		tagName := release.GetTagName()
+		devVersion := -1
+		numFields, err := fmt.Sscanf(tagName, "v%d.%d.%d-dev-%d", &version.Major, &version.Minor, &version.Point, &devVersion)
+		if err != nil && numFields < 3 {
+			// some non-release tags have other format, e.g. libinterceptor-v1.0
+			log.I(ctx, "Ignoring tag %s", tagName)
+			continue
+		}
+
+		// dev-releases are previews of the next release, so e.g. 1.2.3 is more recent than 1.2.3-dev-456
+		if version.GreaterThan(mostRecentVersion) ||
+			(version.Equal(mostRecentVersion) && mostRecentDevVersion != -1 && mostRecentDevVersion < devVersion) {
 			mostRecent = &service.Release{
 				Name:         release.GetName(),
 				VersionMajor: uint32(version.Major),
@@ -146,6 +161,7 @@ func (s *server) CheckForUpdates(ctx context.Context, includePrereleases bool) (
 				BrowserUrl:   release.GetHTMLURL(),
 			}
 			mostRecentVersion = version
+			mostRecentDevVersion = devVersion
 		}
 	}
 	if mostRecent == nil {
@@ -185,7 +201,7 @@ func (s *server) ImportCapture(ctx context.Context, name string, data []uint8) (
 	defer status.Finish(ctx)
 	ctx = log.Enter(ctx, "ImportCapture")
 	src := &capture.Blob{Data: data}
-	p, err := capture.Import(ctx, name, src)
+	p, err := capture.Import(ctx, name, name, src)
 	if err != nil {
 		return nil, err
 	}
@@ -232,10 +248,18 @@ func (s *server) LoadCapture(ctx context.Context, path string) (*path.Capture, e
 	if !s.enableLocalFiles {
 		return nil, fmt.Errorf("Server not configured to allow reading of local files")
 	}
-	name := filepath.Base(path)
 
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	name := fileInfo.Name()
+	// Create a key to prevent name collusion between traces.
+	key := fmt.Sprintf("%v%v%v", name, fileInfo.Size(), fileInfo.ModTime().Unix())
 	src := &capture.File{Path: path}
-	p, err := capture.Import(ctx, name, src)
+
+	p, err := capture.Import(ctx, key, name, src)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +427,16 @@ func (s *server) Set(ctx context.Context, p *path.Any, v interface{}, r *path.Re
 	return resolve.Set(ctx, p, v, r)
 }
 
+func (s *server) Delete(ctx context.Context, p *path.Any, r *path.ResolveConfig) (*path.Any, error) {
+	ctx = status.Start(ctx, "RPC Delete<%v>", p)
+	defer status.Finish(ctx)
+	ctx = log.Enter(ctx, "Delete")
+	if err := p.Validate(); err != nil {
+		return nil, log.Errf(ctx, err, "Invalid path: %v", p)
+	}
+	return resolve.Delete(ctx, p, r)
+}
+
 func (s *server) Follow(ctx context.Context, p *path.Any, r *path.ResolveConfig) (*path.Any, error) {
 	ctx = status.Start(ctx, "RPC Follow")
 	defer status.Finish(ctx)
@@ -481,8 +515,9 @@ func (s *server) Profile(ctx context.Context, pprofW, traceW io.Writer, memorySn
 type statusListener struct {
 	f                  func(*service.TaskUpdate)
 	m                  func(*service.MemoryStatus)
-	lastProgressUpdate map[*status.Task]time.Time
-	progressUpdateFreq time.Duration
+	r                  func(*service.ReplayUpdate)
+	lastProgressUpdate map[*status.Task]time.Time // guarded by progressMutex
+	progressUpdateFreq time.Duration              // guarded by progressMutex
 	progressMutex      sync.Mutex
 }
 
@@ -599,11 +634,41 @@ func (l *statusListener) OnMemorySnapshot(ctx context.Context, stats runtime.Mem
 	})
 }
 
-func (s *server) Status(ctx context.Context, snapshotInterval, statusInterval time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus)) error {
+func (l *statusListener) OnReplayStatusUpdate(ctx context.Context, r *status.Replay, label uint64, totalInstrs, finishedInstrs uint32) {
+	// Not using lock here for efficiency. Because replay status update is of high frequency.
+	// l.progressMutex.Lock()
+	// defer l.progressMutex.Unlock()
+
+	device := path.NewDevice(r.Device)
+	started, finished := r.Started(), r.Finished()
+
+	var status service.ReplayStatus
+	switch {
+	case finished:
+		status = service.ReplayStatus_REPLAY_FINISHED
+	case totalInstrs > 0:
+		status = service.ReplayStatus_REPLAY_EXECUTING
+	case started:
+		status = service.ReplayStatus_REPLAY_STARTED
+	default:
+		status = service.ReplayStatus_REPLAY_QUEUED
+	}
+
+	l.r(&service.ReplayUpdate{
+		ReplayId:       r.ID,
+		Device:         device,
+		Status:         status,
+		Label:          label,
+		TotalInstrs:    totalInstrs,
+		FinishedInstrs: finishedInstrs,
+	})
+}
+
+func (s *server) Status(ctx context.Context, snapshotInterval, statusInterval time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus), r func(*service.ReplayUpdate)) error {
 	ctx = status.StartBackground(ctx, "RPC Status")
 	defer status.Finish(ctx)
 	ctx = log.Enter(ctx, "Status")
-	l := &statusListener{f, m, make(map[*status.Task]time.Time), statusInterval, sync.Mutex{}}
+	l := &statusListener{f, m, r, make(map[*status.Task]time.Time), statusInterval, sync.Mutex{}}
 	unregister := status.RegisterListener(l)
 	defer unregister()
 
@@ -833,7 +898,7 @@ func (s *server) GetTimestamps(ctx context.Context, req *service.GetTimestampsRe
 	ctx = status.Start(ctx, "RPC GetTimestamps")
 	defer status.Finish(ctx)
 	ctx = log.Enter(ctx, "GetTimestamps")
-	return replay.GetTimestamps(ctx, req.Capture, req.Device, h)
+	return replay.GetTimestamps(ctx, req.Capture, req.Device, req.LoopCount, h)
 }
 
 func (s *server) PerfettoQuery(ctx context.Context, c *path.Capture, query string) (*perfetto.QueryResult, error) {

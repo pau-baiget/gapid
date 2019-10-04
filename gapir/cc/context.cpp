@@ -108,18 +108,16 @@ bool Context::initialize(const std::string& id) {
 }
 
 void Context::prefetch(ResourceCache* cache) const {
-  auto cacheSize = static_cast<uint32_t>(mMemoryManager->getFreeSpace());
-  cache->resize(cacheSize);
   auto resources = mReplayRequest->getResources();
   if (resources.size() == 0) {
     return;
   }
 
   auto tempLoader = PassThroughResourceLoader::create(mSrv);
-  cache->prefetch(resources.data(), resources.size(), tempLoader.get());
+  cache->setPrefetch(resources, std::move(tempLoader));
 }
 
-bool Context::interpret(bool cleanup) {
+bool Context::interpret(bool cleanup, bool isPrewarm) {
   Interpreter::ApiRequestCallback callback = [this](Interpreter* interpreter,
                                                     uint8_t api_index) -> bool {
     if (api_index == gapir::Vulkan::INDEX) {
@@ -135,13 +133,32 @@ bool Context::interpret(bool cleanup) {
     }
     return false;
   };
+  Interpreter::CheckReplayStatusCallback replayStatusCallback =
+      [this, isPrewarm](uint64_t label, uint32_t total_instrs,
+                        uint32_t finished_instrs) {
+        // Don't send replay status updates when it's prewarm replay.
+        if (isPrewarm) {
+          return;
+        }
+        // Send notification to GAPIS about every 1% of instructions done.
+        // Worth noting it's not precisely every 1%, because GAPIR check
+        // progress at each command call rather than each instruction. Also
+        // extra check is given here to make sure to send notification when
+        // approaching the last cmd.
+        if (total_instrs < 100 ||
+            (finished_instrs % (total_instrs / 100) == 0) ||
+            (total_instrs - finished_instrs) <= 3) {
+          mSrv->sendReplayStatus(label, total_instrs, finished_instrs);
+        }
+      };
   if (mInterpreter == nullptr) {
     mInterpreter.reset(new Interpreter(mCrashHandler, mMemoryManager,
                                        mReplayRequest->getStackSize()));
-
     registerCallbacks(mInterpreter.get());
   }
   mInterpreter->setApiRequestCallback(std::move(callback));
+  mInterpreter->setCheckReplayStatusCallback(std::move(replayStatusCallback));
+
   auto instAndCount = mReplayRequest->getInstructionList();
   auto res = mInterpreter->run(instAndCount.first, instAndCount.second) &&
              mPostBuffer->flush();
@@ -506,6 +523,22 @@ void Context::registerCallbacks(Interpreter* interpreter) {
       });
 
   interpreter->registerBuiltin(
+      Vulkan::INDEX, Builtins::ReplayDestroyVkInstance,
+      [this](uint32_t label, Stack* stack, bool) {
+        GAPID_DEBUG("[%u]replayDestroyVkInstance()", label);
+        if (mVulkanRenderer != nullptr) {
+          auto* api = mVulkanRenderer->getApi<Vulkan>();
+          return api->replayDestroyVkInstance(stack);
+        } else {
+          GAPID_WARNING(
+              "[%u]replayDestroyVkInstance called without a bound Vulkan "
+              "renderer",
+              label);
+          return false;
+        }
+      });
+
+  interpreter->registerBuiltin(
       Vulkan::INDEX, Builtins::ReplayUnregisterVkInstance,
       [this](uint32_t label, Stack* stack, bool) {
         GAPID_DEBUG("[%u]replayUnregisterVkInstance()", label);
@@ -733,8 +766,8 @@ bool Context::loadResource(Stack* stack) {
 
   const auto& resource = mReplayRequest->getResources()[resourceId];
 
-  if (!mResourceLoader->load(&resource, 1, address, resource.size)) {
-    GAPID_WARNING("Can't load resource: %s", resource.id.c_str());
+  if (!mResourceLoader->load(&resource, 1, address, resource.getSize())) {
+    GAPID_WARNING("Can't load resource: %s", resource.getID().c_str());
     return false;
   }
 
@@ -799,8 +832,8 @@ bool Context::stopTimer(Stack* stack, bool pushReturn) {
 
 bool Context::sendNotificationData(Stack* stack) {
   const uint32_t count = stack->pop<uint32_t>();
-  const void* address = stack->pop<const void*>();
   const uint32_t id = stack->pop<uint32_t>();
+  const void* address = stack->pop<const void*>();
   auto label = mInterpreter->getLabel();
 
   if (!stack->isValid()) {

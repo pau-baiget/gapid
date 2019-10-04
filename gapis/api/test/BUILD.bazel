@@ -29,6 +29,7 @@ apic_template(
     api = ":api",
     templates = [
         "//gapis/api/templates:api",
+        "//gapis/api/templates:api_types",
         "//gapis/api/templates:mutate",
         "//gapis/api/templates:constant_sets",
         "//gapis/api/templates:convert",
@@ -62,6 +63,7 @@ go_library(
         "//gapis/memory/memory_pb:go_default_library",  # keep
         "//gapis/messages:go_default_library",  # keep
         "//gapis/service/path:go_default_library",
+        "//gapis/service/types:go_default_library",  # keep
         "//gapis/stringtable:go_default_library",  # keep
         "@com_github_golang_protobuf//proto:go_default_library",  # keep
     ],

@@ -37,6 +37,14 @@ public class StyleConstants {
   public static final double LABEL_WIDTH = 250;
   public static final double TRACK_MARGIN = 4;
   public static final double SELECTION_THRESHOLD = 0.333;
+  public static final double ZOOM_FACTOR_SCALE = 0.05;
+
+  // Keyboard handling constants.
+  public static final int KB_DELAY = 20;
+  public static final int KB_PAN_SLOW = 30;
+  public static final int KB_PAN_FAST = 60;
+  public static final double KB_ZOOM_SLOW = 2 * ZOOM_FACTOR_SCALE;
+  public static final double KB_ZOOM_FAST = 3 * ZOOM_FACTOR_SCALE;
 
   public static class Colors {
     public final int background;
@@ -51,7 +59,9 @@ public class StyleConstants {
     public final RGBA cpuUsageStroke;
     public final RGBA cpuFreqIdle;
     public final RGBA timelineRuler;
-    public final RGBA counter;
+    public final RGBA counterFill;
+    public final RGBA counterStroke;
+    public final RGBA counterHighlight;
 
     public final RGBA textMain;
     public final RGBA textAlt;
@@ -80,7 +90,9 @@ public class StyleConstants {
         RGBA cpuUsageStroke,
         RGBA cpuFreqIdle,
         RGBA timelineRuler,
-        RGBA counter,
+        RGBA counterFill,
+        RGBA counterStroke,
+        RGBA counterHighlight,
         RGBA textMain,
         RGBA textAlt,
         RGBA textInvertedMain,
@@ -105,7 +117,9 @@ public class StyleConstants {
       this.cpuUsageStroke = cpuUsageStroke;
       this.cpuFreqIdle = cpuFreqIdle;
       this.timelineRuler = timelineRuler;
-      this.counter = counter;
+      this.counterFill = counterFill;
+      this.counterStroke = counterStroke;
+      this.counterHighlight = counterHighlight;
       this.textMain = textMain;
       this.textAlt = textAlt;
       this.textInvertedMain = textInvertedMain;
@@ -124,7 +138,7 @@ public class StyleConstants {
     private static final RGBA LIGHT_TITLE_BACKGROUND = rgb(0xf7, 0xf7, 0xf7);
     private static final RGBA LIGHT_GRIDLINE = rgb(0xda, 0xda, 0xda);
     private static final RGBA LIGHT_PANEL_BORDER = LIGHT_GRIDLINE;
-    private static final RGBA LIGHT_HOVER_BACKGROUND = rgba(0xf7, 0xf7, 0xf7, 0.9f);
+    private static final RGBA LIGHT_HOVER_BACKGROUND = rgba(0xf7, 0xf7, 0xf7, 0.95f);
     private static final RGBA LIGHT_LOADING_BACKGROUND = rgb(0xee, 0xee, 0xee);
     private static final RGBA LIGHT_LOADING_FOREGROUND = rgb(0x66, 0x66, 0x66);
     private static final RGBA LIGHT_SELECTION_BACKGROUND = rgba(0, 0, 255, 0.3f);
@@ -132,7 +146,9 @@ public class StyleConstants {
     private static final RGBA LIGHT_CPU_USAGE_STROKE = rgb(0x0D, 0x9A, 0xA8);
     private static final RGBA LIGHT_CPU_FREQ_IDLE = rgb(240, 240, 240);
     private static final RGBA LIGHT_TIMELINE_RULER = rgb(0x99, 0x99, 0x99);
-    private static final RGBA LIGHT_COUNTER = rgb(0x00, 0xB8, 0xD4);
+    private static final RGBA LIGHT_COUNTER_FILL = LIGHT_CPU_USAGE_FILL;
+    private static final RGBA LIGHT_COUNTER_STROKE = LIGHT_CPU_USAGE_STROKE;
+    private static final RGBA LIGHT_COUNTER_HIGHLIGHT = rgb(0x0A, 0x77, 0x82);
 
     private static final RGBA LIGHT_TEXT_MAIN = rgb(0x32, 0x34, 0x35);
     private static final RGBA LIGHT_TEXT_ALT = rgb(101, 102, 104);
@@ -163,7 +179,9 @@ public class StyleConstants {
             LIGHT_CPU_USAGE_STROKE,
             LIGHT_CPU_FREQ_IDLE,
             LIGHT_TIMELINE_RULER,
-            LIGHT_COUNTER,
+            LIGHT_COUNTER_FILL,
+            LIGHT_COUNTER_STROKE,
+            LIGHT_COUNTER_HIGHLIGHT,
             LIGHT_TEXT_MAIN,
             LIGHT_TEXT_ALT,
             LIGHT_TEXT_INVERTED_MAIN,
@@ -182,7 +200,7 @@ public class StyleConstants {
     private static final RGBA DARK_TITLE_BACKGROUND = rgb(0x25, 0x25, 0x25);
     private static final RGBA DARK_GRIDLINE = rgb(0x40, 0x40, 0x40);
     private static final RGBA DARK_PANEL_BORDER = DARK_GRIDLINE;
-    private static final RGBA DARK_HOVER_BACKGROUND = rgba(0x17, 0x17, 0x17, 0.7f);
+    private static final RGBA DARK_HOVER_BACKGROUND = rgba(0x17, 0x17, 0x17, 0.8f);
     private static final RGBA DARK_LOADING_BACKGROUND = rgb(0x25, 0x25, 0x25);
     private static final RGBA DARK_LOADING_FOREGROUND = rgb(0xAA, 0xAA, 0xAA);
     private static final RGBA DARK_SELECTION_BACKGROUND = rgba(0, 0, 255, 0.5f);
@@ -190,7 +208,9 @@ public class StyleConstants {
     private static final RGBA DARK_CPU_USAGE_STROKE = rgb(0x0D, 0x9A, 0xA8);
     private static final RGBA DARK_CPU_FREQ_IDLE = rgb(240, 240, 240);
     private static final RGBA DARK_TIMELINE_RULER = rgb(0x99, 0x99, 0x99);
-    private static final RGBA DARK_COUNTER = rgb(0x00, 0xB8, 0xD4);
+    private static final RGBA DARK_COUNTER_FILL = DARK_CPU_USAGE_FILL;
+    private static final RGBA DARK_COUNTER_STROKE = DARK_CPU_USAGE_STROKE;
+    private static final RGBA DARK_COUNTER_HIGHLIHGT = rgb(0x0A, 0x77, 0x82);
 
     private static final RGBA DARK_TEXT_MAIN = rgb(0xff, 0xff, 0xff);
     private static final RGBA DARK_TEXT_ALT = rgb(0xdd, 0xdd, 0xdd);
@@ -221,7 +241,9 @@ public class StyleConstants {
             DARK_CPU_USAGE_STROKE,
             DARK_CPU_FREQ_IDLE,
             DARK_TIMELINE_RULER,
-            DARK_COUNTER,
+            DARK_COUNTER_FILL,
+            DARK_COUNTER_STROKE,
+            DARK_COUNTER_HIGHLIHGT,
             DARK_TEXT_MAIN,
             DARK_TEXT_ALT,
             DARK_TEXT_INVERTED_MAIN,

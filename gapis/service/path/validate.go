@@ -224,6 +224,11 @@ func (n *Memory) Validate() error {
 }
 
 // Validate checks the path is valid.
+func (n *MemoryAsType) Validate() error {
+	return checkNotNilAndValidate(n, n.After, "after")
+}
+
+// Validate checks the path is valid.
 func (n *Mesh) Validate() error {
 	return checkNotNilAndValidate(n, protoutil.OneOf(n.Object), "object")
 }
@@ -318,4 +323,12 @@ func (n *Stats) Validate() error {
 // Validate checks the path is valid.
 func (n *Thumbnail) Validate() error {
 	return checkNotNilAndValidate(n, protoutil.OneOf(n.Object), "object")
+}
+
+// Validate checks the path is valid.
+func (n *Type) Validate() error {
+	if n != nil {
+		return nil
+	}
+	return fmt.Errorf("Invalid path '%v': type must not be nil", n)
 }

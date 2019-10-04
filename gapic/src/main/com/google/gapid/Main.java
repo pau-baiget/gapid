@@ -26,6 +26,8 @@ import com.google.gapid.models.Analytics;
 import com.google.gapid.models.Follower;
 import com.google.gapid.models.Models;
 import com.google.gapid.models.Settings;
+import com.google.gapid.perfetto.PerfettoConfig;
+import com.google.gapid.perfetto.canvas.PanelCanvas;
 import com.google.gapid.server.GapiPaths;
 import com.google.gapid.server.GapisProcess;
 import com.google.gapid.util.Crash2ExceptionHandler;
@@ -35,7 +37,6 @@ import com.google.gapid.util.Flags.Flag;
 import com.google.gapid.util.Logging;
 import com.google.gapid.util.Messages;
 import com.google.gapid.util.Scheduler;
-import com.google.gapid.views.TracerDialog;
 import com.google.gapid.widgets.Theme;
 import com.google.gapid.widgets.Widgets;
 
@@ -193,6 +194,7 @@ public class Main {
 
   private static final Flag<?>[] ALL_FLAGS = {
     Flags.help,
+    Flags.fullHelp,
     Flags.version,
     GapiPaths.gapidPath,
     GapiPaths.adbPath,
@@ -207,6 +209,7 @@ public class Main {
     Logging.logDir,
     Follower.logFollowRequests,
     Server.useCache,
-    TracerDialog.perfettoConfig,
+    PerfettoConfig.perfettoConfig,
+    PanelCanvas.showRedraws,
   };
 }

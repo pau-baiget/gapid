@@ -37,6 +37,7 @@ const (
 
 const (
 	ExportPlain ExportMode = iota
+	ExportOnScreen
 	ExportDiagnostics
 	ExportFrames
 	ExportTimestamps
@@ -78,6 +79,7 @@ type ExportMode uint8
 
 var exportModeNames = map[ExportMode]string{
 	ExportPlain:       "plain",
+	ExportOnScreen:    "on-screen",
 	ExportDiagnostics: "diagnostics",
 	ExportFrames:      "frames",
 	ExportTimestamps:  "timestamps",
@@ -95,11 +97,13 @@ type (
 		CaptureID bool `help:"if true then interpret the capture file argument as a capture ID that is already loaded in gapis"`
 	}
 	CommandFilterFlags struct {
-		Context int `help:"Filter to the i'th context."`
+		Context     int    `help:"Filter to the i'th context. Does nothing with -contextname."`
+		ContextName string `help:"Filter by context name."`
 	}
 	ObservationFlags struct {
-		Ranges bool `help:"if true then display the read and write ranges made by each command."`
-		Data   bool `help:"if true then display the bytes read and written by each command. Implies Ranges."`
+		Ranges            bool `help:"if true then display the read and write ranges made by each command."`
+		Data              bool `help:"if true then display the bytes read and written by each command. Implies Ranges."`
+		TypedObservations bool `help:"if true then display the bytes read and written by each command as resolved types"`
 	}
 	DeviceFlags struct {
 		Device string            `help:"Device to use. Either 'host' or the friendly name of the device"`
@@ -255,6 +259,7 @@ type (
 			Unknown struct {
 				Extensions bool `help:"Hide unknown extensions from the application."`
 			}
+			CoherentMemoryTracker bool `help:"_disables the coherent memory tracker so it won't interfere with gdb during trace"`
 		}
 		Record struct {
 			Errors     bool `help:"_record device error state"`
@@ -369,9 +374,10 @@ type (
 		CaptureFileFlags
 	}
 	GetTimestampsFlags struct {
-		Gapis GapisFlags
-		Gapir GapirFlags
-		Out   string `help:"output file to save the profiling result"`
+		Gapis     GapisFlags
+		Gapir     GapirFlags
+		LoopCount int    `help:"_The number of times to loop the trace. (experimental)"`
+		Out       string `help:"output file to save the profiling result"`
 	}
 
 	CreateGraphVisualizationFlags struct {

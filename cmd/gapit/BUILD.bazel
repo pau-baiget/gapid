@@ -83,10 +83,12 @@ go_library(
         "//gapis/memory:go_default_library",
         "//gapis/replay/opcode:go_default_library",
         "//gapis/service:go_default_library",
+        "//gapis/service/memory_box:go_default_library",
         "//gapis/service/path:go_default_library",
+        "//gapis/service/types:go_default_library",
         "//gapis/stringtable:go_default_library",
+        "//tools/build/third_party/perfetto:config_go_proto",
         "@com_github_golang_protobuf//proto:go_default_library",
-        "@perfetto//:config_go_proto",
     ],
 )
 
@@ -94,6 +96,7 @@ go_stripped_binary(
     name = "gapit",
     data = [
         "//cmd/gapis",
+        "//core/vulkan/vk_api_timing_layer/cc:libVkLayer_APITiming",
         "//core/vulkan/vk_virtual_swapchain/cc:json",
         "//core/vulkan/vk_virtual_swapchain/cc:libVkLayer_VirtualSwapchain",
         "//gapii/cc:libgapii",

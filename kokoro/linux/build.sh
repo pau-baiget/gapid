@@ -24,11 +24,12 @@ curl -L -k -O -s https://github.com/bazelbuild/bazel/releases/download/0.25.1/ba
 mkdir bazel
 bash bazel-0.25.1-installer-linux-x86_64.sh --prefix=$PWD/bazel
 
-# Get GCC 7
+# Get GCC 8
+sudo rm /etc/apt/sources.list.d/cuda.list*
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 sudo apt-get -q update
-sudo apt-get -qy install gcc-7 g++-7
-export CC=/usr/bin/gcc-7
+sudo apt-get -qy install gcc-8 g++-8
+export CC=/usr/bin/gcc-8
 
 # Get the Android NDK
 curl -L -k -O -s https://dl.google.com/android/repository/android-ndk-r18b-linux-x86_64.zip
@@ -36,7 +37,7 @@ unzip -q android-ndk-r18b-linux-x86_64.zip
 export ANDROID_NDK_HOME=$PWD/android-ndk-r18b
 
 cd $SRC
-BUILD_SHA=${KOKORO_GITHUB_COMMIT:-$KOKORO_GITHUB_PULL_REQUEST_COMMIT}
+BUILD_SHA=${DEV_PREFIX}${KOKORO_GITHUB_COMMIT:-$KOKORO_GITHUB_PULL_REQUEST_COMMIT}
 
 function build {
   echo $(date): Starting build for $@...

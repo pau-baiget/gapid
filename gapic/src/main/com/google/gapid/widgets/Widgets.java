@@ -376,6 +376,12 @@ public class Widgets {
     return result;
   }
 
+  public static Spinner createSpinner(Composite parent, int value, int min, int max, Listener listener) {
+    Spinner result = createSpinner(parent, value, min, max);
+    result.addListener(SWT.Selection, listener);
+    return result;
+  }
+
   public static Text createTextbox(Composite parent, String text) {
     return createTextbox(parent, SWT.SINGLE | SWT.BORDER, text);
   }
@@ -521,8 +527,12 @@ public class Widgets {
   }
 
   public static Group createGroup(Composite parent, String text) {
+    return createGroup(parent, text, new FillLayout(SWT.VERTICAL));
+  }
+
+  public static Group createGroup(Composite parent, String text, Layout layout) {
     Group group = new Group(parent, SWT.NONE);
-    group.setLayout(new FillLayout(SWT.VERTICAL));
+    group.setLayout(layout);
     group.setText(text);
     group.setFont(JFaceResources.getFontRegistry().getBold(JFaceResources.DEFAULT_FONT));
     return group;
@@ -735,6 +745,20 @@ public class Widgets {
     return composite;
   }
 
+  /**
+   * Recursively adds the given listener to the composite and all its children.
+   */
+  public static void recursiveAddListener(Composite composite, int eventType, Listener listener) {
+    composite.addListener(eventType, listener);
+    for (Control child : composite.getChildren()) {
+      if (child instanceof Composite) {
+        recursiveAddListener((Composite)child, eventType, listener);
+      } else {
+        child.addListener(eventType, listener);
+      }
+    }
+  }
+
   public static <C extends Control> C withLayoutData(C control, Object layoutData) {
     control.setLayoutData(layoutData);
     return control;
@@ -769,6 +793,32 @@ public class Widgets {
     layout.marginHeight = marginHeight;
     layout.horizontalSpacing = marginWidth;
     layout.verticalSpacing = marginHeight;
+    return layout;
+  }
+
+  public static GridLayout withMarginAndSpacing(GridLayout layout,
+      int marginWidth, int marginHeight, int horizontalSpacing, int verticalSpacing) {
+    layout.marginWidth = marginWidth;
+    layout.marginHeight = marginHeight;
+    layout.horizontalSpacing = horizontalSpacing;
+    layout.verticalSpacing = verticalSpacing;
+    return layout;
+  }
+
+  public static GridLayout withSpacing(GridLayout layout, int horizontalSpacing, int verticalSpacing) {
+    layout.horizontalSpacing = horizontalSpacing;
+    layout.verticalSpacing = verticalSpacing;
+    return layout;
+  }
+
+  public static RowLayout withMargin(RowLayout layout, int marginWidth, int marginHeight) {
+    layout.marginWidth = marginWidth;
+    layout.marginHeight = marginHeight;
+    return layout;
+  }
+
+  public static RowLayout withSpacing(RowLayout layout, int spacing) {
+    layout.spacing = spacing;
     return layout;
   }
 

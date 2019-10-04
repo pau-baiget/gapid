@@ -60,6 +60,7 @@ type Listener interface {
 	OnMemorySnapshot(context.Context, runtime.MemStats)
 	OnTaskBlock(context.Context, *Task)
 	OnTaskUnblock(context.Context, *Task)
+	OnReplayStatusUpdate(context.Context, *Replay, uint64, uint32, uint32)
 }
 
 // Unregister is the function returned by RegisterListener and is used to
@@ -136,5 +137,13 @@ func onMemorySnapshot(ctx context.Context, snapshot runtime.MemStats) {
 	defer listenerMutex.RUnlock()
 	for _, l := range listeners {
 		l.OnMemorySnapshot(ctx, snapshot)
+	}
+}
+
+func onReplayStatusUpdate(ctx context.Context, r *Replay, label uint64, totalInstrs, finishedInstrs uint32) {
+	listenerMutex.RLock()
+	defer listenerMutex.RUnlock()
+	for _, l := range listeners {
+		l.OnReplayStatusUpdate(ctx, r, label, totalInstrs, finishedInstrs)
 	}
 }

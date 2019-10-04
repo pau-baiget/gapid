@@ -116,6 +116,20 @@ func (c *client) Set(ctx context.Context, p *path.Any, v interface{}, r *path.Re
 	return res.GetPath(), nil
 }
 
+func (c *client) Delete(ctx context.Context, p *path.Any, r *path.ResolveConfig) (*path.Any, error) {
+	res, err := c.client.Delete(ctx, &service.DeleteRequest{
+		Path:   p,
+		Config: r,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := res.GetError(); err != nil {
+		return nil, err.Get()
+	}
+	return res.GetPath(), nil
+}
+
 func (c *client) Follow(ctx context.Context, p *path.Any, r *path.ResolveConfig) (*path.Any, error) {
 	res, err := c.client.Follow(ctx, &service.FollowRequest{
 		Path:   p,
@@ -186,7 +200,7 @@ func (c *client) Profile(
 }
 
 func (c *client) Status(
-	ctx context.Context, snapshotInterval time.Duration, statusUpdateFrequency time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus)) error {
+	ctx context.Context, snapshotInterval time.Duration, statusUpdateFrequency time.Duration, f func(*service.TaskUpdate), m func(*service.MemoryStatus), rs func(t *service.ReplayUpdate)) error {
 
 	req := &service.ServerStatusRequest{MemorySnapshotInterval: float32(snapshotInterval.Seconds()), StatusUpdateFrequency: float32(statusUpdateFrequency.Seconds())}
 
@@ -210,6 +224,10 @@ func (c *client) Status(
 		} else if _, ok := r.Res.(*service.ServerStatusResponse_Memory); ok {
 			if m != nil {
 				m(r.GetMemory())
+			}
+		} else if _, ok := r.Res.(*service.ServerStatusResponse_Replay); ok {
+			if rs != nil {
+				rs(r.GetReplay())
 			}
 		}
 	}

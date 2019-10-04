@@ -21,11 +21,14 @@ import static com.google.gapid.util.MoreFutures.transform;
 import static com.google.gapid.util.MoreFutures.transformAsync;
 
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.gapid.models.Perfetto;
 import com.google.gapid.perfetto.canvas.Panel;
+import com.google.gapid.perfetto.models.TrackConfig.Group;
 import com.google.gapid.perfetto.views.CounterPanel;
 import com.google.gapid.perfetto.views.CpuSummaryPanel;
+import com.google.gapid.perfetto.views.GpuQueuePanel;
 import com.google.gapid.perfetto.views.ProcessSummaryPanel;
 import com.google.gapid.perfetto.views.ThreadPanel;
 import com.google.gapid.perfetto.views.TitlePanel;
@@ -55,14 +58,26 @@ public class Tracks {
   }
 
   private static ListenableFuture<Perfetto.Data.Builder> enumerateCpu(Perfetto.Data.Builder data) {
+    if (data.getNumCpus() == 0) {
+      return Futures.immediateFuture(data);
+    }
+
     CpuSummaryTrack summary = new CpuSummaryTrack(data.getNumCpus());
-    data.tracks.addLabelGroup(null, summary.getId(), "CPU Usage",
-        group(state -> new CpuSummaryPanel(state, summary), false, (group, filtered) -> {
-          for (int i = 1; i < group.size(); i += 2) {
-            group.setVisible(i, !filtered);
-          }
-        }, true));
-    return CpuTrack.enumerate(summary.getId(), data);
+    return transform(CpuTrack.enumerate(summary.getId(), data), configs -> {
+      boolean hasAnyFrequency = configs.stream().anyMatch(c -> c.hasFrequency);
+      Group.UiFactory ui = hasAnyFrequency ?
+          group(state -> new CpuSummaryPanel(state, summary), false, (group, filtered) -> {
+              for (int cpu = 0, track = 0; cpu < configs.size(); cpu++, track++) {
+                if (configs.get(cpu).hasFrequency) {
+                  track++;
+                  group.setVisible(track, !filtered);
+                }
+              }
+            }, true) :
+          group(state -> new CpuSummaryPanel(state, summary), false);
+      data.tracks.addLabelGroup(null, summary.getId(), "CPU Usage", ui);
+      return data;
+    });
   }
 
   public static ListenableFuture<Perfetto.Data.Builder> enumerateCounters(
@@ -72,15 +87,25 @@ public class Tracks {
 
   public static Perfetto.Data.Builder enumerateGpu(Perfetto.Data.Builder data) {
     boolean found = false;
+    for (GpuInfo.Gpu gpu : data.getGpu()) {
+      if (!found) {
+        addGpuGroup(data);
+        found = true;
+      }
+      SliceTrack track = SliceTrack.forGpu(gpu.id);
+      data.tracks.addTrack("gpu", track.getId(), gpu.getDisplay(),
+          single(state -> new GpuQueuePanel(state, gpu, track), true));
+    }
+
     for (CounterInfo counter : data.getCounters().values()) {
-      if ("gpu".equals(counter.refType)) {
+      if ("gpu".equals(counter.refType) && counter.count > 0) {
         if (!found) {
           addGpuGroup(data);
           found = true;
         }
-        CounterTrack track = new CounterTrack(counter.id, counter.min, counter.max);
+        CounterTrack track = new CounterTrack(counter);
         data.tracks.addTrack("gpu", track.getId(), counter.name,
-            single(state -> new CounterPanel(state, track, counter.name), true));
+            single(state -> new CounterPanel(state, track), true));
       }
     }
     return data;

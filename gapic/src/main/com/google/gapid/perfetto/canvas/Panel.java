@@ -4,6 +4,7 @@ import org.eclipse.swt.graphics.Cursor;
 import org.eclipse.swt.widgets.Display;
 
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 /**
  * A {@link Panel} is a UI control handling painting and user interactions.
@@ -15,12 +16,12 @@ public interface Panel {
   public void render(RenderContext ctx, Repainter repainter);
 
   @SuppressWarnings("unused")
-  public default Panel.Dragger onDragStart(double x, double y, int mods, double scrollTop) {
+  public default Panel.Dragger onDragStart(double x, double y, int mods) {
     return Dragger.NONE;
   }
 
   @SuppressWarnings("unused")
-  public default Panel.Hover onMouseMove(TextMeasurer m, double x, double y, double scrollTop) {
+  public default Panel.Hover onMouseMove(Fonts.TextMeasurer m, double x, double y) {
     return Hover.NONE;
   }
 
@@ -30,17 +31,17 @@ public interface Panel {
     public void repaint(Area area);
 
     public default Repainter translated(double dx, double dy) {
+      return transformed(a -> a.translate(dx, dy));
+    }
+
+    public default Repainter transformed(Function<Area, Area> transform) {
       return new Repainter() {
         @Override
         public void repaint(Area area) {
-          Repainter.this.repaint(area.translate(dx, dy));
+          Repainter.this.repaint(transform.apply(area));
         }
       };
     }
-  }
-
-  public static interface TextMeasurer {
-    public Size measure(String text);
   }
 
   public static interface Dragger {
@@ -92,7 +93,12 @@ public interface Panel {
   public static interface Hover {
     public static final Panel.Hover NONE = new Hover() {
       @Override
-      public Panel.Hover translated(double dx, double dy) {
+      public Hover translated(double dx, double dy) {
+        return NONE;
+      }
+
+      @Override
+      public Hover transformed(Function<Area, Area> transform) {
         return NONE;
       }
     };
@@ -100,11 +106,16 @@ public interface Panel {
     public default Area getRedraw() { return Area.NONE; }
     public default Cursor getCursor(@SuppressWarnings("unused") Display display) { return null; }
     public default void stop() { /* empty */ }
+    public default boolean isOverlay() { return false; }
 
     /** Returns whether the screen should be redrawn. */
     public default boolean click() { return false; }
 
     public default Panel.Hover translated(double dx, double dy) {
+      return transformed(a -> a.translate(dx, dy));
+    }
+
+    public default Panel.Hover transformed(Function<Area, Area> transform) {
       Area redraw = getRedraw();
       if (redraw == Area.NONE) {
         return this;
@@ -113,7 +124,7 @@ public interface Panel {
       return new Hover() {
         @Override
         public Area getRedraw() {
-          return redraw.translate(dx,  dy);
+          return transform.apply(redraw);
         }
 
         @Override
@@ -124,6 +135,11 @@ public interface Panel {
         @Override
         public void stop() {
           Hover.this.stop();
+        }
+
+        @Override
+        public boolean isOverlay() {
+          return Hover.this.isOverlay();
         }
 
         @Override

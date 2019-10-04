@@ -16,36 +16,47 @@
 package com.google.gapid.perfetto.views;
 
 import static com.google.gapid.perfetto.views.Loading.drawLoading;
+import static com.google.gapid.perfetto.views.StyleConstants.TRACK_MARGIN;
 import static com.google.gapid.perfetto.views.StyleConstants.colors;
 import static com.google.gapid.util.MoreFutures.transform;
 
 import com.google.gapid.perfetto.TimeSpan;
 import com.google.gapid.perfetto.canvas.Area;
+import com.google.gapid.perfetto.canvas.Fonts;
 import com.google.gapid.perfetto.canvas.RenderContext;
 import com.google.gapid.perfetto.canvas.Size;
+import com.google.gapid.perfetto.models.CounterInfo;
 import com.google.gapid.perfetto.models.CounterTrack;
 import com.google.gapid.perfetto.models.Selection.CombiningBuilder;
 
 public class CounterPanel extends TrackPanel implements Selectable {
-  private static final double HEIGHT = 30;
+  private static final double HEIGHT = 45;
   private static final double HOVER_MARGIN = 10;
   private static final double HOVER_PADDING = 4;
   private static final double CURSOR_SIZE = 5;
 
   private final CounterTrack track;
-  private final String name;
   protected HoverCard hovered = null;
   protected double mouseXpos = 0;
 
-  public CounterPanel(State state, CounterTrack track, String name) {
+  public CounterPanel(State state, CounterTrack track) {
     super(state);
     this.track = track;
-    this.name = name;
   }
 
   @Override
   public String getTitle() {
-    return name;
+    return track.getCounter().name;
+  }
+
+  @Override
+  public String getTooltip() {
+    CounterInfo counter = track.getCounter();
+    StringBuilder sb = new StringBuilder().append("\\b").append(counter.name);
+    if (!counter.description.isEmpty()) {
+      sb.append("\n").append(counter.description);
+    }
+    return sb.toString();
   }
 
   @Override
@@ -65,8 +76,10 @@ public class CounterPanel extends TrackPanel implements Selectable {
         return;
       }
 
-      double min = Math.min(0, track.getMin()), range = track.getMax() - min;
-      ctx.setForegroundColor(colors().counter);
+      CounterInfo counter = track.getCounter();
+      double min = Math.min(0, counter.min), range = counter.max - min;
+      ctx.setBackgroundColor(colors().counterFill);
+      ctx.setForegroundColor(colors().counterStroke);
       ctx.path(path -> {
         path.moveTo(0, h);
         double lastX = 0, lastY = h;
@@ -79,24 +92,37 @@ public class CounterPanel extends TrackPanel implements Selectable {
           lastY = nextY;
         }
         path.lineTo(lastX, h);
+        ctx.fillPath(path);
         ctx.drawPath(path);
       });
+
+      if (hovered != null) {
+        double y = (HEIGHT - 1) * (1 - (hovered.value - min) / range);
+        ctx.setBackgroundColor(colors().counterHighlight);
+        ctx.fillRect(hovered.startX, y - 1, hovered.endX - hovered.startX, 3);
+        ctx.setForegroundColor(colors().textMain);
+        ctx.drawCircle(mouseXpos, y, CURSOR_SIZE / 2);
+      }
+
+      String label = String.format("%,d", Math.round(counter.max));
+      Size labelSize = ctx.measure(Fonts.Style.Normal, label);
+      ctx.setBackgroundColor(colors().hoverBackground);
+      ctx.fillRect(0, 0, labelSize.w + 8, labelSize.h + 8);
+      ctx.setForegroundColor(colors().textMain);
+      ctx.drawText(Fonts.Style.Normal, label, 4, 4);
 
       if (hovered != null) {
         ctx.setBackgroundColor(colors().hoverBackground);
         ctx.fillRect(mouseXpos + HOVER_MARGIN, 0, 2 * HOVER_PADDING + hovered.size.w, HEIGHT);
         ctx.setForegroundColor(colors().textMain);
-        ctx.drawText(
-            hovered.label, mouseXpos + HOVER_MARGIN + HOVER_PADDING, (HEIGHT - hovered.size.h) / 2);
-
-        ctx.drawCircle(
-            mouseXpos, (HEIGHT - 1) * (1 - (hovered.value - min) / range), CURSOR_SIZE / 2);
+        ctx.drawText(Fonts.Style.Normal, hovered.label,
+            mouseXpos + HOVER_MARGIN + HOVER_PADDING, (HEIGHT - hovered.size.h) / 2);
       }
     });
   }
 
   @Override
-  protected Hover onTrackMouseMove(TextMeasurer m, double x, double y) {
+  protected Hover onTrackMouseMove(Fonts.TextMeasurer m, double x, double y) {
     CounterTrack.Data data = track.getData(state, () -> { /* nothing */ });
     if (data == null || data.ts.length == 0) {
       return Hover.NONE;
@@ -110,13 +136,23 @@ public class CounterPanel extends TrackPanel implements Selectable {
       }
     }
 
-    hovered = new HoverCard(m, data.values[idx]);
-    mouseXpos = state.timeToPx(data.ts[idx]);
+    if (idx >= data.ts.length) {
+      return Hover.NONE;
+    }
+
+    double startX = state.timeToPx(data.ts[idx]);
+    double endX = (idx >= data.ts.length - 1) ? startX : state.timeToPx(data.ts[idx + 1]);
+    hovered = new HoverCard(m, data.values[idx], startX, endX);
+    mouseXpos = x;
+
     return new Hover() {
       @Override
       public Area getRedraw() {
-        return new Area(mouseXpos - CURSOR_SIZE, 0,
-            CURSOR_SIZE + HOVER_MARGIN + HOVER_PADDING + hovered.size.w + HOVER_PADDING, HEIGHT);
+        double start = Math.min(mouseXpos - CURSOR_SIZE / 2, startX);
+        double end = Math.max(mouseXpos + CURSOR_SIZE / 2 +
+            HOVER_MARGIN + HOVER_PADDING + hovered.size.w + HOVER_PADDING,
+            endX);
+        return new Area(start, -TRACK_MARGIN, end - start, HEIGHT + 2 * TRACK_MARGIN);
       }
 
       @Override
@@ -128,19 +164,34 @@ public class CounterPanel extends TrackPanel implements Selectable {
 
   @Override
   public void computeSelection(CombiningBuilder builder, Area area, TimeSpan ts) {
-    builder.add(Kind.Counter, transform(
-        track.getValues(state.getQueryEngine(), ts), data -> new CounterTrack.Values(name, data)));
+    builder.add(Kind.Counter, transform(track.getValues(state.getQueryEngine(), ts),
+        data -> new CounterTrack.Values(track.getCounter().name, data)));
   }
 
   private static class HoverCard {
+    private static final double MIN_DOUBLE_AS_LONG = 100_000.0;
+    private static final double MAX_DOUBLE_AS_LONG = 9.2233720368547748E18;
+
     public final double value;
+    public final double startX, endX;
     public final String label;
     public final Size size;
 
-    public HoverCard(TextMeasurer tm, double value) {
+    public HoverCard(Fonts.TextMeasurer tm, double value, double startX, double endX) {
       this.value = value;
-      this.label = String.format("Value: %,d", Math.round(value));
-      this.size = tm.measure(label);
+      this.startX = startX;
+      this.endX = endX;
+      this.label = "Value: " + format(value);
+      this.size = tm.measure(Fonts.Style.Normal, label);
+    }
+
+    private static String format(double v) {
+      double abs = Math.abs(v);
+      if (abs >= MIN_DOUBLE_AS_LONG && abs <= MAX_DOUBLE_AS_LONG) {
+        return String.format("%,d", Math.round(v));
+      } else {
+        return String.format("%,g", v);
+      }
     }
   }
 }

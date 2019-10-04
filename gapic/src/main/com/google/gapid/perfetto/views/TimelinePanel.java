@@ -21,6 +21,7 @@ import static com.google.gapid.perfetto.views.StyleConstants.rangeEnd;
 import static com.google.gapid.perfetto.views.StyleConstants.rangeStart;
 
 import com.google.gapid.perfetto.TimeSpan;
+import com.google.gapid.perfetto.canvas.Fonts;
 import com.google.gapid.perfetto.canvas.Panel;
 import com.google.gapid.perfetto.canvas.RenderContext;
 import com.google.gapid.perfetto.canvas.Size;
@@ -51,6 +52,10 @@ public class TimelinePanel extends Panel.Base {
     ctx.trace("TimelinePanel", () -> {
       TimeSpan visible = state.getVisibleTime();
       TimeSpan trace = state.getTraceTime();
+      if (visible.getDuration() == 0) {
+        return;
+      }
+
       // TODO: this should be part of the state - dedupe with below.
       long step = getGridStepSize(
           visible.getDuration(), (width - LABEL_WIDTH) / DESIRED_PX_PER_STEP);
@@ -59,10 +64,10 @@ public class TimelinePanel extends Panel.Base {
 
       ctx.setForegroundColor(colors().textMain);
       String label = TimeSpan.timeToString(step);
-      Size size = ctx.measure(label);
+      Size size = ctx.measure(Fonts.Style.Normal, label);
       ctx.drawIcon(
           rangeStart(ctx.theme), LABEL_WIDTH - MARGIN - 2 * ICON_SIZE - size.w, MARGIN, size.h);
-      ctx.drawText(label, LABEL_WIDTH - MARGIN - ICON_SIZE - size.w, MARGIN);
+      ctx.drawText(Fonts.Style.Normal, label, LABEL_WIDTH - MARGIN - ICON_SIZE - size.w, MARGIN);
       ctx.drawIcon(rangeEnd(ctx.theme),  LABEL_WIDTH - MARGIN - ICON_SIZE, MARGIN, size.h);
 
       ctx.setForegroundColor(colors().timelineRuler);
@@ -79,7 +84,8 @@ public class TimelinePanel extends Panel.Base {
           }
 
           ctx.setForegroundColor(colors().textMain);
-          ctx.drawText(timeToString(s - trace.start, step), xPos + MARGIN, MARGIN);
+          ctx.drawText(
+              Fonts.Style.Normal, timeToString(s - trace.start, step), xPos + MARGIN, MARGIN);
           ctx.setForegroundColor(colors().timelineRuler);
           ctx.drawLine(xPos, 0, xPos, height);
 

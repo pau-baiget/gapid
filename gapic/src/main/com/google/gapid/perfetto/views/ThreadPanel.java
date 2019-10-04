@@ -25,10 +25,12 @@ import static com.google.gapid.util.MoreFutures.transform;
 import com.google.gapid.perfetto.ThreadState;
 import com.google.gapid.perfetto.TimeSpan;
 import com.google.gapid.perfetto.canvas.Area;
+import com.google.gapid.perfetto.canvas.Fonts;
 import com.google.gapid.perfetto.canvas.RenderContext;
 import com.google.gapid.perfetto.canvas.Size;
 import com.google.gapid.perfetto.models.CpuTrack;
 import com.google.gapid.perfetto.models.Selection.CombiningBuilder;
+import com.google.gapid.perfetto.models.SliceTrack;
 import com.google.gapid.perfetto.models.ThreadTrack;
 
 import org.eclipse.swt.SWT;
@@ -70,6 +72,11 @@ public class ThreadPanel extends TrackPanel implements Selectable {
   }
 
   @Override
+  public String getTooltip() {
+    return "\\b" + getTitle();
+  }
+
+  @Override
   public double getHeight() {
     return (expanded ? 1 + track.getThread().maxDepth : 1) * SLICE_HEIGHT;
   }
@@ -107,7 +114,8 @@ public class ThreadPanel extends TrackPanel implements Selectable {
           ctx.fillRect(mergeStartX, 0, mergeWidth, SLICE_HEIGHT);
           if (mergeWidth > 7) {
             ctx.setForegroundColor(colors().textInvertedMain);
-            ctx.drawText(mergeState.label, rectStart + 2, 2, rectWidth - 4, SLICE_HEIGHT - 4);
+            ctx.drawText(Fonts.Style.Normal, mergeState.label,
+                rectStart + 2, 2, rectWidth - 4, SLICE_HEIGHT - 4);
           }
           merging = false;
         }
@@ -144,7 +152,8 @@ public class ThreadPanel extends TrackPanel implements Selectable {
           ctx.fillRect(rectStart, 0, rectWidth, SLICE_HEIGHT);
           if (rectWidth > 7) {
             ctx.setForegroundColor(colors().textInvertedMain);
-            ctx.drawText(ts.label, rectStart + 2, 2, rectWidth - 4, SLICE_HEIGHT - 4);
+            ctx.drawText(Fonts.Style.Normal, ts.label,
+                rectStart + 2, 2, rectWidth - 4, SLICE_HEIGHT - 4);
           }
         }
       }
@@ -154,12 +163,13 @@ public class ThreadPanel extends TrackPanel implements Selectable {
       }
 
       if (expanded) {
-        for (int i = 0; i < data.starts.length; i++) {
-          long tStart = data.starts[i];
-          long tEnd = data.ends[i];
-          int depth = data.depths[i];
+        SliceTrack.Data slices = data.slices;
+        for (int i = 0; i < slices.starts.length; i++) {
+          long tStart = slices.starts[i];
+          long tEnd = slices.ends[i];
+          int depth = slices.depths[i];
           //String cat = data.categories[i];
-          String title = data.titles[i];
+          String title = slices.titles[i];
           if (tEnd <= visible.start || tStart >= visible.end) {
             continue;
           }
@@ -178,7 +188,8 @@ public class ThreadPanel extends TrackPanel implements Selectable {
           }
 
           ctx.setForegroundColor(colors().textInvertedMain);
-          ctx.drawText(title, rectStart + 2, y + 2, rectWidth - 4, SLICE_HEIGHT - 4);
+          ctx.drawText(Fonts.Style.Normal, title,
+              rectStart + 2, y + 2, rectWidth - 4, SLICE_HEIGHT - 4);
         }
       }
 
@@ -188,11 +199,12 @@ public class ThreadPanel extends TrackPanel implements Selectable {
             mouseXpos + HOVER_MARGIN, mouseYpos, hoveredSize.w + 2 * HOVER_PADDING, hoveredSize.h);
 
         ctx.setForegroundColor(colors().textMain);
-        ctx.drawText(
-            hoveredTitle, mouseXpos + HOVER_MARGIN + HOVER_PADDING, mouseYpos + HOVER_PADDING / 2);
+        ctx.drawText(Fonts.Style.Normal, hoveredTitle,
+            mouseXpos + HOVER_MARGIN + HOVER_PADDING, mouseYpos + HOVER_PADDING / 2);
         if (!hoveredCategory.isEmpty()) {
           ctx.setForegroundColor(colors().textAlt);
-          ctx.drawText(hoveredCategory, mouseXpos + HOVER_MARGIN + HOVER_PADDING,
+          ctx.drawText(Fonts.Style.Normal, hoveredCategory,
+              mouseXpos + HOVER_MARGIN + HOVER_PADDING,
               mouseYpos + hoveredSize.h / 2, hoveredSize.h / 2);
         }
       }
@@ -200,7 +212,7 @@ public class ThreadPanel extends TrackPanel implements Selectable {
   }
 
   @Override
-  protected Hover onTrackMouseMove(TextMeasurer m, double x, double y) {
+  protected Hover onTrackMouseMove(Fonts.TextMeasurer m, double x, double y) {
     ThreadTrack.Data data = track.getData(state, () -> { /* nothing */ });
     if (data == null) {
       return Hover.NONE;
@@ -220,7 +232,7 @@ public class ThreadPanel extends TrackPanel implements Selectable {
           int index = i;
           hoveredTitle = data.schedStates[i].label;
           hoveredCategory = "";
-          hoveredSize = m.measure(hoveredTitle);
+          hoveredSize = m.measure(Fonts.Style.Normal, hoveredTitle);
 
           return new Hover() {
             @Override
@@ -255,10 +267,11 @@ public class ThreadPanel extends TrackPanel implements Selectable {
       }
     } else if (expanded) {
       depth--;
-      for (int i = 0; i < data.starts.length; i++) {
-        if (data.depths[i] == depth && data.starts[i] <= t && t <= data.ends[i]) {
-          hoveredTitle = data.titles[i];
-          hoveredCategory = data.categories[i];
+      SliceTrack.Data slices = data.slices;
+      for (int i = 0; i < slices.starts.length; i++) {
+        if (slices.depths[i] == depth && slices.starts[i] <= t && t <= slices.ends[i]) {
+          hoveredTitle = slices.titles[i];
+          hoveredCategory = slices.categories[i];
           if (hoveredTitle.isEmpty()) {
             if (hoveredCategory.isEmpty()) {
               return Hover.NONE;
@@ -268,12 +281,12 @@ public class ThreadPanel extends TrackPanel implements Selectable {
           }
 
           hoveredSize = Size.vertCombine(HOVER_PADDING, HOVER_PADDING / 2,
-              m.measure(hoveredTitle),
-              hoveredCategory.isEmpty() ? Size.ZERO : m.measure(hoveredCategory));
+              m.measure(Fonts.Style.Normal, hoveredTitle),
+              hoveredCategory.isEmpty() ? Size.ZERO : m.measure(Fonts.Style.Normal, hoveredCategory));
           mouseYpos = Math.max(0, Math.min(mouseYpos - (hoveredSize.h - SLICE_HEIGHT) / 2,
               (1 + track.getThread().maxDepth) * SLICE_HEIGHT - hoveredSize.h));
-          long id = data.ids[i];
-          long ts = data.starts[i];
+          long id = slices.ids[i];
+          long ts = slices.starts[i];
 
           return new Hover() {
             @Override
@@ -295,7 +308,8 @@ public class ThreadPanel extends TrackPanel implements Selectable {
             @Override
             public boolean click() {
               if (id != 0) {
-                state.setSelection(ThreadTrack.getSlice(state.getQueryEngine(), id, ts));
+                state.setSelection(SliceTrack.getSlice(
+                    state.getQueryEngine(), SliceTrack.SliceType.Thread, id, ts));
               }
               return false;
             }
@@ -335,9 +349,9 @@ public class ThreadPanel extends TrackPanel implements Selectable {
         endDepth = Integer.MAX_VALUE;
       }
       builder.add(Kind.Thread, transform(
-          ThreadTrack.getSlices(
+          SliceTrack.getThreadSlices(
               state.getQueryEngine(), track.getThread().utid, ts, startDepth, endDepth),
-          ThreadTrack.Slices::new));
+          SliceTrack.Slices::new));
     }
   }
 }

@@ -25,7 +25,6 @@ import static com.google.gapid.views.SettingsDialog.showSettingsDialog;
 import static com.google.gapid.views.TracerDialog.showOpenTraceDialog;
 import static com.google.gapid.views.TracerDialog.showSaveTraceDialog;
 import static com.google.gapid.views.TracerDialog.showTracingDialog;
-import static com.google.gapid.views.WelcomeDialog.showWelcomeDialog;
 import static com.google.gapid.widgets.Widgets.createComposite;
 import static com.google.gapid.widgets.Widgets.scheduleIfNotDisposed;
 import static com.google.gapid.widgets.Widgets.withLayoutData;
@@ -173,6 +172,11 @@ public class MainWindow extends ApplicationWindow {
       public void onHeap(long heap) {
         scheduleIfNotDisposed(statusBar, () -> statusBar.setServerHeapSize(heap));
       }
+
+      @Override
+      public void onReplayProgress(String status) {
+        scheduleIfNotDisposed(statusBar, () -> statusBar.setReplayStatus(status));
+      }
     });
   }
 
@@ -248,7 +252,7 @@ public class MainWindow extends ApplicationWindow {
     manager.add(createEditMenu(models, widgets));
     manager.add(createGotoMenu(models));
     manager.add(createViewMenu());
-    manager.add(createHelpMenu(client, models, widgets));
+    manager.add(createHelpMenu(models, widgets));
     manager.updateAll(true);
   }
 
@@ -260,12 +264,27 @@ public class MainWindow extends ApplicationWindow {
     MenuManager manager = findMenu(MenuItems.FILE_ID);
     manager.removeAll();
 
+    Action save = MenuItems.FileSave.create(() -> showSaveTraceDialog(getShell(), models));
+
     manager.add(MenuItems.FileOpen.create(() -> showOpenTraceDialog(getShell(), models)));
-    manager.add(MenuItems.FileSave.create(() -> showSaveTraceDialog(getShell(), models)));
+    manager.add(save);
     manager.add(createOpenRecentMenu(models));
     manager.add(MenuItems.FileTrace.create(
         () -> showTracingDialog(client, getShell(), models, widgets)));
     manager.add(MenuItems.FileExit.create(() -> close()));
+
+    save.setEnabled(false);
+    models.capture.addListener(new Capture.Listener() {
+      @Override
+      public void onCaptureLoadingStart(boolean maintainState) {
+        save.setEnabled(false);
+      }
+
+      @Override
+      public void onCaptureLoaded(Message error) {
+        save.setEnabled(models.capture.isGraphics());
+      }
+    });
 
     return manager;
   }
@@ -347,7 +366,7 @@ public class MainWindow extends ApplicationWindow {
     return manager;
   }
 
-  private MenuManager createHelpMenu(Client client, Models models, Widgets widgets) {
+  private MenuManager createHelpMenu(Models models, Widgets widgets) {
     MenuManager manager = new MenuManager("&Help");
     manager.add(MenuItems.HelpOnlineHelp.create(() -> showHelp(models.analytics)));
     manager.add(MenuItems.HelpAbout.create(
@@ -355,8 +374,6 @@ public class MainWindow extends ApplicationWindow {
     manager.add(MenuItems.HelpShowLogs.create(() -> showLogDir(models.analytics)));
     manager.add(MenuItems.HelpLicenses.create(
         () -> showLicensesDialog(getShell(), models.analytics, widgets.theme)));
-    manager.add(MenuItems.HelpWelcome.create(
-        () -> showWelcomeDialog(client, getShell(), models, widgets)));
     return manager;
   }
 
@@ -420,8 +437,7 @@ public class MainWindow extends ApplicationWindow {
     HelpOnlineHelp("&Online Help\tF1", SWT.F1),
     HelpAbout("&About"),
     HelpShowLogs("Open &Log Directory"),
-    HelpLicenses("&Licenses"),
-    HelpWelcome("Show &Welcome Screen");
+    HelpLicenses("&Licenses");
 
     public static final String FILE_ID = "file";
     public static final String VIEW_ID = "view";

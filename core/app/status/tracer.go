@@ -97,6 +97,8 @@ func (s *statusTracer) OnTaskStart(ctx context.Context, t *Task) {
 func (s *statusTracer) OnTaskProgress(ctx context.Context, t *Task) {}
 func (s *statusTracer) OnTaskBlock(ctx context.Context, t *Task)    {}
 func (s *statusTracer) OnTaskUnblock(ctx context.Context, t *Task)  {}
+func (s *statusTracer) OnReplayStatusUpdate(ctx context.Context, r *Replay, label uint64, totalInstrs, finishedInstrs uint32) {
+}
 
 func (s *statusTracer) OnTaskFinish(ctx context.Context, t *Task) {
 	s.mutex.Lock()

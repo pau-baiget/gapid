@@ -17,4 +17,7 @@ cc_library(
     hdrs = glob(["*.h"]),
     include_prefix = "vulkan",
     visibility = ["//visibility:public"],
+    deps = [
+        "//core/vulkan/cc/include/ggp_c:vulkan_ggp_dummy",
+    ],
 )

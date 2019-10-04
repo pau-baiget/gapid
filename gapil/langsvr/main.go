@@ -30,7 +30,7 @@ import (
 
 	ls "github.com/google/gapid/core/langsvr"
 	"github.com/google/gapid/core/log"
-	"github.com/google/gapid/core/text/parse"
+	"github.com/google/gapid/core/text/parse/cst"
 	"github.com/google/gapid/gapil/analysis"
 	"github.com/google/gapid/gapil/ast"
 	"github.com/google/gapid/gapil/format"
@@ -87,10 +87,11 @@ var (
 // Config is is the configuration data sent from the client, held in the
 // "gfxapi" group.
 type Config struct {
-	Debug       bool     `json:"debug"`
-	LogToFiles  bool     `json:"logToFiles"`
-	IgnorePaths []string `json:"ignorePaths"`
-	CheckUnused bool     `json:"checkUnused"`
+	Debug                 bool     `json:"debug"`
+	LogToFiles            bool     `json:"logToFiles"`
+	IgnorePaths           []string `json:"ignorePaths"`
+	CheckUnused           bool     `json:"checkUnused"`
+	IncludePossibleValues bool     `json:"includePossibleValues"`
 }
 
 type server struct {
@@ -310,7 +311,7 @@ func (s *server) Signatures(ctx context.Context, doc *ls.Document, pos ls.Positi
 			params.Add(p.Name(), da.full.documentation(p.AST))
 		}
 		for i, a := range call.AST.Arguments {
-			if tok := da.full.mappings.AST.CST(a).Token(); offset >= tok.Start {
+			if tok := da.full.mappings.AST.CST(a).Tok(); offset >= tok.Start {
 				paramIndex = i
 			}
 		}
@@ -384,7 +385,7 @@ func (s *server) Highlights(ctx context.Context, doc *ls.Document, pos ls.Positi
 
 // Format returns a list of edits required to format the the entire document.
 func (s *server) Format(ctx context.Context, doc *ls.Document, opts ls.FormattingOptions) (ls.TextEditList, error) {
-	m := parse.NewCSTMap()
+	m := &ast.Mappings{}
 	ast, err := parser.Parse("", doc.Body().Text(), m)
 	if err != nil {
 		// Reformatting ASTs with parse errors?
@@ -439,8 +440,10 @@ func (s *server) Hover(ctx context.Context, doc *ls.Document, pos ls.Position) (
 	offset := doc.Body().Offset(pos)
 	code := ls.SourceCodeList{}
 
-	if val, res := possibleValues(da, pos); val != nil {
-		code.Add("plain", "Possible values: "+val.Print(res))
+	if s.config.IncludePossibleValues {
+		if val, res := possibleValues(da, pos); val != nil {
+			code.Add("plain", "Possible values: "+val.Print(res))
+		}
 	}
 
 	if s.config != nil && s.config.Debug {
@@ -463,7 +466,7 @@ func (s *server) Hover(ctx context.Context, doc *ls.Document, pos ls.Position) (
 			}
 			if len(branch.Children) < 5 {
 				for _, n := range branch.Children {
-					tok := n.Token()
+					tok := n.Tok()
 					lines := strings.Split(tok.String(), "\n")
 					cnt := len(lines)
 					if cnt == 1 {
@@ -506,6 +509,9 @@ func (s *server) Symbols(ctx context.Context, doc *ls.Document) (ls.SymbolList, 
 // WorkspaceSymbols returns project-wide symbols.
 func (s *server) WorkspaceSymbols(ctx context.Context) (ls.SymbolList, error) {
 	a := s.analyzer.results(ctx, s)
+	if a == nil {
+		return nil, log.Err(ctx, nil, "Analyser config not ready yet")
+	}
 
 	syms := ls.SymbolList{}
 	for _, root := range a.roots {
@@ -650,7 +656,7 @@ func astChildAt(da *docAnalysis, parent ast.Node, offset int) ast.Node {
 		if cst == nil {
 			return
 		}
-		if tok := cst.Token(); offset >= tok.Start && offset <= tok.End {
+		if tok := cst.Tok(); offset >= tok.Start && offset <= tok.End {
 			child = n
 		}
 	})
@@ -686,11 +692,11 @@ func (fa *fullAnalysis) nodeLocation(doc *ls.Document, n ast.Node) ls.Location {
 }
 
 func (fa *fullAnalysis) nodeRange(doc *ls.Document, n ast.Node) ls.Range {
-	return tokRange(doc, fa.mappings.AST.CST(n).Token())
+	return tokRange(doc, fa.mappings.AST.CST(n).Tok())
 }
 
 func (fa *fullAnalysis) nodePosition(doc *ls.Document, n ast.Node) ls.Position {
-	return tokRange(doc, fa.mappings.AST.CST(n).Token()).Start
+	return tokRange(doc, fa.mappings.AST.CST(n).Tok()).Start
 }
 
 func tokRange(doc *ls.Document, tok cst.Token) ls.Range {
@@ -701,14 +707,14 @@ func fragRange(doc *ls.Document, f cst.Fragment) ls.Range {
 	if f == nil {
 		return doc.Body().Range(0, 0)
 	}
-	return tokRange(doc, f.Token())
+	return tokRange(doc, f.Tok())
 }
 
 func (fa *fullAnalysis) documentation(n ast.Node) string {
 	buf := &bytes.Buffer{}
 	cst := fa.mappings.AST.CST(n)
-	cst.Prefix().WriteTo(buf)
-	cst.Suffix().WriteTo(buf)
+	cst.Prefix().Write(buf)
+	cst.Suffix().Write(buf)
 	lines := strings.Split(buf.String(), "\n")
 	for i, line := range lines {
 		line = strings.TrimSpace(lines[i])

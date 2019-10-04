@@ -29,6 +29,7 @@ import (
 	"github.com/google/gapid/core/app/auth"
 	"github.com/google/gapid/core/app/crash"
 	"github.com/google/gapid/core/data/id"
+	"github.com/google/gapid/core/event/task"
 	"github.com/google/gapid/core/log"
 	"github.com/google/gapid/core/os/android/adb"
 	"github.com/google/gapid/core/os/device"
@@ -39,12 +40,34 @@ import (
 	"github.com/google/gapid/gapis/client"
 	"github.com/google/gapid/gapis/memory"
 	"github.com/google/gapid/gapis/service"
+	"github.com/google/gapid/gapis/service/memory_box"
 	"github.com/google/gapid/gapis/service/path"
+	"github.com/google/gapid/gapis/service/types"
 )
 
 func (f CommandFilterFlags) commandFilter(ctx context.Context, client service.Service, p *path.Capture) (*path.CommandFilter, error) {
 	filter := &path.CommandFilter{}
-	if f.Context >= 0 {
+	if f.ContextName != "" {
+		boxedContexts, err := client.Get(ctx, p.Contexts().Path(), nil)
+		if err != nil {
+			return nil, log.Err(ctx, err, "Failed to load the contexts")
+		}
+		contextList := boxedContexts.(*service.Contexts).List
+
+		for i, c := range contextList {
+			boxedContext, err := client.Get(ctx, p.Context(c.ID.ID()).Path(), nil)
+			if err != nil {
+				return nil, log.Errf(ctx, err, "Failed to load context at index %d", i)
+			}
+			context := boxedContext.(*service.Context)
+			if f.ContextName == context.Name {
+				filter.Context = c.ID
+				return filter, nil
+			}
+		}
+
+		return nil, log.Errf(ctx, err, "Could not find context named %s", f.ContextName)
+	} else if f.Context >= 0 {
 		boxedContexts, err := client.Get(ctx, p.Contexts().Path(), nil)
 		if err != nil {
 			return nil, log.Err(ctx, err, "Failed to load the contexts")
@@ -384,10 +407,119 @@ func getConstantSet(ctx context.Context, client service.Service, p *path.Constan
 	return out, nil
 }
 
+var typeCache = map[uint64]*types.Type{}
+
+func getType(ctx context.Context, client service.Service, t *path.Type) (*types.Type, error) {
+	if tp, ok := typeCache[t.TypeIndex]; ok {
+		return tp, nil
+	} else {
+		tp, err := client.Get(ctx, t.Path(), nil)
+		if err != nil {
+			return nil, err
+		}
+		tt := tp.(*types.Type)
+		typeCache[t.TypeIndex] = tt
+		return tt, nil
+	}
+}
+
+func printBoxValue(ctx context.Context, client service.Service, t *path.Type, v *memory_box.Value, prefix string) error {
+	if task.Stopped(ctx) {
+		return task.StopReason(ctx)
+	}
+	err := error(nil)
+	tp, err := getType(ctx, client, t)
+	if err != nil {
+		return err
+	}
+	switch t := tp.Ty.(type) {
+	case *types.Type_Pod:
+		fmt.Printf("%v", *v.Val.(*memory_box.Value_Pod).Pod)
+	case *types.Type_Pointer:
+		fmt.Printf("*%v", v.Val.(*memory_box.Value_Pointer).Pointer.Address)
+
+	case *types.Type_Slice:
+		childType := &path.Type{TypeIndex: t.Slice.Underlying}
+		sliceData := v.Val.(*memory_box.Value_Slice).Slice
+		oldPrefix := prefix
+		prefix := prefix + "│   "
+		fmt.Printf("\n")
+
+		for i := 0; i < len(sliceData.Values); i++ {
+			if i > 9 {
+				fmt.Printf("%s└──  ... %v more\n", oldPrefix, len(sliceData.Values)-i)
+				break
+			}
+			if i == len(sliceData.Values)-1 {
+				fmt.Printf("%s└──", oldPrefix)
+			} else {
+				fmt.Printf("%s├──", oldPrefix)
+			}
+
+			if err = printBoxValue(ctx, client, childType, sliceData.Values[i], prefix); err != nil {
+				return err
+			}
+			fmt.Printf("\n")
+		}
+	case *types.Type_Reference:
+		return fmt.Errorf("Unhandled: Reference types")
+	case *types.Type_Struct:
+		fields := t.Struct.Fields
+		structData := v.Val.(*memory_box.Value_Struct).Struct
+		oldPrefix := prefix
+		prefix = prefix + "│   "
+		fmt.Printf("\n")
+		for i := 0; i < len(fields); i++ {
+			childType := &path.Type{TypeIndex: fields[i].Type}
+			if i == len(fields)-1 {
+				fmt.Printf("%s└── %s: ", oldPrefix, fields[i].Name)
+			} else {
+				fmt.Printf("%s├── %s: ", oldPrefix, fields[i].Name)
+			}
+
+			if err = printBoxValue(ctx, client, childType, structData.Fields[i], prefix); err != nil {
+				return err
+			}
+			fmt.Printf("\n")
+		}
+	case *types.Type_Map:
+		return fmt.Errorf("Unhandled: Map types")
+	case *types.Type_Array:
+		fmt.Printf("[")
+		childType := &path.Type{TypeIndex: t.Array.ElementType}
+		arrayData := v.Val.(*memory_box.Value_Array).Array
+		prefix = prefix + "│   "
+		for i := uint64(0); i < t.Array.Size; i++ {
+			if err = printBoxValue(ctx, client, childType, arrayData.Entries[i], prefix); err != nil {
+				return err
+			}
+			if i != t.Array.Size-1 {
+				fmt.Printf(", ")
+			}
+		}
+		fmt.Printf("]")
+	case *types.Type_Pseudonym:
+		if err = printBoxValue(ctx, client, &path.Type{TypeIndex: t.Pseudonym.Underlying}, v, prefix); err != nil {
+			return err
+		}
+	case *types.Type_Enum:
+		fmt.Printf("%v", *v.Val.(*memory_box.Value_Pod).Pod)
+	case *types.Type_Sized:
+		fmt.Printf("%v", *v.Val.(*memory_box.Value_Pod).Pod)
+	}
+	return nil
+}
+
 func printCommand(ctx context.Context, client service.Service, p *path.Command, c *api.Command, of ObservationFlags) error {
 	indices := make([]string, len(p.Indices))
 	for i, v := range p.Indices {
 		indices[i] = fmt.Sprintf("%d", v)
+	}
+
+	type val struct {
+		p uint64
+		t *path.Type
+		n string
 	}
 
 	params := make([]string, len(c.Parameters))
@@ -417,29 +549,64 @@ func printCommand(ctx context.Context, client service.Service, p *path.Command, 
 
 	fmt.Fprintln(os.Stdout, "")
 
-	if of.Ranges || of.Data {
+	if of.Ranges || of.Data || of.TypedObservations {
 		mp := p.MemoryAfter(0, 0, math.MaxUint64)
 		mp.ExcludeData = true
 		mp.ExcludeObserved = true
+		mp.IncludeTypes = of.TypedObservations
 		boxedMemory, err := client.Get(ctx, mp.Path(), nil)
 		if err != nil {
 			return log.Err(ctx, err, "Couldn't fetch memory observations")
 		}
 		m := boxedMemory.(*service.Memory)
-		for _, read := range m.Reads {
-			fmt.Printf("   R: [%v - %v]\n",
-				memory.BytePtr(read.Base),
-				memory.BytePtr(read.Base+read.Size-1))
-			if of.Data {
-				printMemoryData(ctx, client, p, read)
+
+		if of.TypedObservations {
+			for _, tm := range m.TypedRanges {
+				tp, err := getType(ctx, client, tm.Type)
+				if err != nil {
+					return err
+				}
+				sl := tp.GetSlice()
+				if sl == nil {
+					return fmt.Errorf("Observations are expected to be slices")
+				}
+				if tm.Range.Size > 1024 {
+					fmt.Fprintf(os.Stdout, "%s [%v]: ...", tp.Name, tm.Range)
+					continue
+				}
+				v, err := client.Get(ctx,
+					(&path.MemoryAsType{
+						Address: tm.Range.Base,
+						Size:    tm.Range.Size,
+						Pool:    0,
+						After:   p,
+						Type:    tm.Type,
+					}).Path(), nil)
+				if err != nil {
+					fmt.Fprintf(os.Stdout, "%s [%v]: err %+v \n", tp.Name, tm.Range, err)
+				} else {
+					vv := v.(*memory_box.Value)
+					fmt.Fprintf(os.Stdout, "%s [%v]: ", tp.Name, tm.Range)
+					printBoxValue(ctx, client, tm.Type, vv, "      ")
+				}
 			}
 		}
-		for _, write := range m.Writes {
-			fmt.Printf("   W: [%v - %v]\n",
-				memory.BytePtr(write.Base),
-				memory.BytePtr(write.Base+write.Size-1))
-			if of.Data {
-				printMemoryData(ctx, client, p, write)
+		if of.Ranges || of.Data {
+			for _, read := range m.Reads {
+				fmt.Printf("   R: [%v - %v]\n",
+					memory.BytePtr(read.Base),
+					memory.BytePtr(read.Base+read.Size-1))
+				if of.Data {
+					printMemoryData(ctx, client, p, read)
+				}
+			}
+			for _, write := range m.Writes {
+				fmt.Printf("   W: [%v - %v]\n",
+					memory.BytePtr(write.Base),
+					memory.BytePtr(write.Base+write.Size-1))
+				if of.Data {
+					printMemoryData(ctx, client, p, write)
+				}
 			}
 		}
 	}

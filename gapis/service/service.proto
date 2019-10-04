@@ -20,10 +20,12 @@ import "core/os/device/device.proto";
 import "gapis/api/service.proto";
 import "gapis/perfetto/service/perfetto.proto";
 import "gapis/service/box/box.proto";
+import "gapis/service/memory_box/box.proto";
 import "gapis/service/path/path.proto";
+import "gapis/service/types/types.proto";
 import "gapis/service/severity/severity.proto";
 import "gapis/stringtable/stringtable.proto";
-import "perfetto/config/perfetto_config.proto";
+import "protos/perfetto/config/perfetto_config.proto";
 
 package service;
 option java_package = "com.google.gapid.proto.service";
@@ -111,6 +113,10 @@ message Value {
     image.Info image_info = 40;
 
     box.Value box = 50;
+
+    types.Type type = 60;
+
+    memory_box.Value memory_box = 70;
   }
 }
 
@@ -168,6 +174,19 @@ message SetRequest {
 }
 
 message SetResponse {
+  oneof res {
+    path.Any path = 1;
+    Error error = 2;
+  }
+}
+
+message DeleteRequest {
+  path.Any path = 1;
+  // Config to use when resolving paths.
+  path.ResolveConfig config = 2;
+}
+
+message DeleteResponse {
   oneof res {
     path.Any path = 1;
     Error error = 2;
@@ -246,6 +265,23 @@ message MemoryStatus {
   uint64 totalHeap = 1;
 }
 
+enum ReplayStatus {
+  REPLAY_QUEUED = 0;
+  REPLAY_STARTED = 1;
+  REPLAY_EXECUTING = 2;
+  REPLAY_FINISHED = 3;
+}
+
+message ReplayUpdate {
+  uint32 replay_id = 1;
+  path.Device device = 2;
+  ReplayStatus status = 3;
+  // Progress information below, sent if status is EXECUTING.
+  uint64 label = 4;
+  uint32 total_instrs = 5;
+  uint32 finished_instrs = 6;
+}
+
 message ServerStatusRequest {
   float memory_snapshot_interval = 1;
   float status_update_frequency = 2;
@@ -255,6 +291,7 @@ message ServerStatusResponse {
   oneof res {
     TaskUpdate task = 1;
     MemoryStatus memory = 2;
+    ReplayUpdate replay = 3;
   }
 }
 
@@ -330,6 +367,7 @@ message ExportReplayOptions {
   repeated GetFramebufferAttachmentRequest get_framebuffer_attachment_requests =
       2;
   GetTimestampsRequest get_timestamps_request = 3;
+  bool display_to_surface = 4;
 }
 
 message ExportReplayRequest {
@@ -574,6 +612,12 @@ service Gapid {
   // value or memory at p replaced with v. The path returned is identical to p,
   // but with the base changed to refer to the new capture.
   rpc Set(SetRequest) returns (SetResponse) {
+  }
+
+  // Delete creates a copy of the capture referenced by p, but without the
+  // object, value or memory at p. The path returned is identical to p, but with
+  // the base changed to refer to the new capture.
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {
   }
 
   // Follow returns the path to the object that the value at p links to.
@@ -871,6 +915,8 @@ message Memory {
   repeated MemoryRange writes = 3;
   // The data-relative ranges that have been observed.
   repeated MemoryRange observed = 4;
+  // All types of the reads on this command
+  repeated TypedMemoryRange typed_ranges = 5;
 }
 
 // MemoryRange represents a contiguous range of memory.
@@ -879,6 +925,14 @@ message MemoryRange {
   uint64 base = 1;
   // The number of bytes that are in the memory range.
   uint64 size = 2;
+}
+
+message TypedMemoryRange {
+  // The type of the memory observations
+  path.Type type = 1;
+  MemoryRange range = 2;
+  // The root of the memory observation
+  uint64 root = 3;
 }
 
 // UsageHints hints to the server the intended usage of the result of a request.
@@ -1144,6 +1198,8 @@ message TraceOptions {
   string server_local_save_path = 21;
   // Name of the pipe to connect/listen to.
   string pipe_name = 22;
+  // Disable coherent_memory_tracking. (Useful if you want to attach a debugger)
+  bool disable_coherent_memory_tracker = 25;
   // The config to use if doing a Perfetto trace.
   perfetto.protos.TraceConfig perfetto_config = 24;
 }
@@ -1224,6 +1280,8 @@ message TraceTypeCapabilities {
 message GetTimestampsRequest {
   path.Capture capture = 1;
   path.Device device = 2;
+  // The number of times to loop the trace.
+  int32 LoopCount = 3;
 }
 
 // Timestamps describes the durations of commands execution, each of which
@@ -1251,4 +1309,8 @@ message GetTimestampsResponse {
     Timestamps timestamps = 1;
     Error error = 2;
   }
+}
+
+// Passes the current command, unmodified
+message Pass {
 }

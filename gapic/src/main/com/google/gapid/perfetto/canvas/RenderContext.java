@@ -1,16 +1,12 @@
 package com.google.gapid.perfetto.canvas;
 
 import com.google.common.base.Preconditions;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.gapid.perfetto.canvas.Fonts.Style;
 import com.google.gapid.widgets.Theme;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.graphics.Device;
-import org.eclipse.swt.graphics.Font;
-import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.graphics.RGBA;
@@ -20,16 +16,15 @@ import org.eclipse.swt.internal.DPIUtil;
 import org.eclipse.swt.widgets.Control;
 
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * Handles all the drawing operations.
  */
-public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
+public class RenderContext implements Fonts.TextMeasurer, AutoCloseable {
   protected static final Logger LOG = Logger.getLogger(RenderContext.class.getName());
 
   private static final int textSizeGreediness = 3; // must be >= 1.
@@ -39,32 +34,51 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
 
   private final GC gc;
   private final ColorCache colors;
-  private final Panel.TextMeasurer textMeasurer;
-  private final double scrollTop;
+  private final Fonts.Context fontContext;
   private final LinkedList<TransformAndClip> transformStack = Lists.newLinkedList();
+  private final List<Overlay> overlays = Lists.newArrayList();
   private final Map<String, Long> traces = Maps.newHashMap();
+  private Fonts.Style lastFontStyle = Fonts.Style.Normal;
 
-  public RenderContext(
-      Theme theme, GC gc, ColorCache colors, Panel.TextMeasurer textMeasurer, double scrollTop) {
+  public RenderContext(Theme theme, GC gc, ColorCache colors, Fonts.Context fontContext) {
     this.theme = theme;
     this.gc = gc;
     this.colors = colors;
-    this.textMeasurer = textMeasurer;
-    this.scrollTop = scrollTop;
+    this.fontContext = fontContext;
 
-    Area clip = Area.of(gc.getClipping()).translate(0, scrollTop);
+    Area clip = Area.of(gc.getClipping());
     Transform transform = new Transform(gc.getDevice());
     gc.getTransform(transform);
     transform.scale((float)(1 / scale), (float)(1 / scale));
-    transform.translate(0, (float)(-scrollTop * scale));
     gc.setTransform(transform);
     transformStack.push(new TransformAndClip(transform, clip));
     gc.setLineWidth((int)scale);
+    fontContext.setFont(gc, Fonts.Style.Normal);
+  }
+
+  public void addOverlay(Runnable renderer) {
+    float[] transform = new float[6];
+    transformStack.getLast().transform.getElements(transform);
+    overlays.add(new Overlay(new Transform(gc.getDevice(), transform), renderer));
+  }
+
+  public void renderOverlays() {
+    if (!overlays.isEmpty()) {
+      trace("Overlays", () -> {
+        for (Overlay overlay : overlays) {
+          gc.setTransform(overlay.transform);
+          overlay.renderer.run();
+          overlay.dispose();
+        }
+        overlays.clear();
+        gc.setTransform(transformStack.getLast().transform);
+      });
+    }
   }
 
   @Override
-  public Size measure(String text) {
-    return textMeasurer.measure(text);
+  public Size measure(Fonts.Style style, String text) {
+    return fontContext.measure(style, text);
   }
 
   @Override
@@ -74,11 +88,12 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
     for (TransformAndClip t : transformStack) {
       t.dispose();
     }
+    for (Overlay overlay : overlays) {
+      overlay.dispose();
+    }
+    gc.setTransform(null);
+    gc.setLineWidth(0);
     transformStack.clear();
-  }
-
-  public double getScrollTop() {
-    return scrollTop;
   }
 
   public void setForegroundColor(RGBA color) {
@@ -119,31 +134,37 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
   }
 
   // x, y is top left corner of text.
-  public void drawText(String text, double x, double y) {
+  public void drawText(Fonts.Style style, String text, double x, double y) {
+    if (style != lastFontStyle) {
+      lastFontStyle = style;
+      fontContext.setFont(gc, style);
+    }
     gc.drawText(text, scale(x), scale(y), SWT.DRAW_TRANSPARENT);
   }
 
   // draws text centered vertically
-  public void drawText(String text, double x, double y, double h) {
-    drawText(text, x, y + (h - textMeasurer.measure(text).h) / 2);
+  public void drawText(Fonts.Style style, String text, double x, double y, double h) {
+    drawText(style, text, x, y + (h - fontContext.measure(style, text).h) / 2);
   }
 
   // draws the text centered horizontally and vertically, truncated to fit into the given width.
-  public void drawText(String text, double x, double y, double w, double h)  {
-    drawText(text, x, y, w, h, true);
+  public void drawText(Fonts.Style style, String text, double x, double y, double w, double h)  {
+    drawText(style, text, x, y, w, h, true);
   }
 
   // draws the text centered horizontally and vertically, only if it fits.
-  public void drawTextIfFits(String text, double x, double y, double w, double h) {
-    drawText(text, x, y, w, h, false);
+  public void drawTextIfFits(
+      Fonts.Style style, String text, double x, double y, double w, double h) {
+    drawText(style, text, x, y, w, h, false);
   }
 
-  private void drawText(String text, double x, double y, double w, double h, boolean truncate) {
+  private void drawText(
+      Fonts.Style style, String text, double x, double y, double w, double h, boolean truncate) {
     String toDisplay = text;
     for (int l = text.length(); ; ) {
-      Size size = textMeasurer.measure(toDisplay);
+      Size size = fontContext.measure(style, toDisplay);
       if (size.w < w) {
-        drawText(toDisplay, x + (w - size.w) / 2 , y + (h - size.h) / 2);
+        drawText(style, toDisplay, x + (w - size.w) / 2 , y + (h - size.h) / 2);
         break;
       } else if (!truncate) {
         break;
@@ -158,12 +179,13 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
   }
 
   // draws the text centered vertically and left truncated to fit into the given width.
-  public void drawTextLeftTruncate(String text, double x, double y, double w, double h) {
+  public void drawTextLeftTruncate(
+      Fonts.Style style, String text, double x, double y, double w, double h) {
     String toDisplay = text;
     for (int l = text.length(); ; ) {
-      Size size = textMeasurer.measure(toDisplay);
+      Size size = fontContext.measure(style, toDisplay);
       if (size.w < w) {
-        drawText(toDisplay, x, y + (h - size.h) / 2);
+        drawText(style, toDisplay, x, y + (h - size.h) / 2);
         break;
       }
 
@@ -176,9 +198,9 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
   }
 
   // draws the text centered vertically and on the left of x.
-  public void drawTextRightJustified(String text, double x, double y, double h)  {
-    Size size = textMeasurer.measure(text);
-    drawText(text, x - size.w, y + (h - size.h) / 2);
+  public void drawTextRightJustified(Fonts.Style style, String text, double x, double y, double h) {
+    Size size = fontContext.measure(style, text);
+    drawText(style, text, x - size.w, y + (h - size.h) / 2);
   }
 
   public void drawPath(Path path) {
@@ -294,53 +316,29 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
     }
   }
 
-  public static class Global implements Panel.TextMeasurer {
+  public static class Global implements Fonts.TextMeasurer {
     private final Theme theme;
     private final ColorCache colors;
-    private final Font font;
-    private final GC textGC;
-    private final Cache<String, Size> textExtentCache = CacheBuilder.newBuilder()
-        .softValues()
-        .recordStats()
-        .build();
+    private final Fonts.Context fontContext;
 
     public Global(Theme theme, Control owner) {
       this.theme = theme;
       this.colors = new ColorCache(owner.getDisplay());
-      this.font = scaleFont(owner.getDisplay(), owner.getFont());
-      this.textGC = new GC(owner.getDisplay());
-      textGC.setFont(font);
+      this.fontContext = new Fonts.Context(owner);
+    }
+
+    public RenderContext newContext(GC gc) {
+      return new RenderContext(theme, gc, colors, fontContext);
     }
 
     @Override
-    public Size measure(String text) {
-      try {
-        return textExtentCache.get(text, () -> Size.of(textGC.stringExtent(text), 1 / scale));
-      } catch (ExecutionException e) {
-        throw new RuntimeException(e.getCause());
-      }
-    }
-
-    public RenderContext newContext(GC gc, double scrollTop) {
-      gc.setFont(font);
-      return new RenderContext(theme, gc, colors, this, scrollTop);
+    public Size measure(Style style, String text) {
+      return fontContext.measure(style, text);
     }
 
     public void dispose() {
       colors.dispose();
-      font.dispose();
-      textGC.dispose();
-
-      LOG.log(Level.FINE, "Text extent cache stats: {0}", textExtentCache.stats());
-      textExtentCache.invalidateAll();
-    }
-
-    private static Font scaleFont(Device display, Font font) {
-      FontData[] fds = font.getFontData();
-      for (FontData fd : fds) {
-        fd.setHeight(scale(fd.getHeight()));
-      }
-      return new Font(display, fds);
+      fontContext.dispose();
     }
   }
 
@@ -353,6 +351,20 @@ public class RenderContext implements Panel.TextMeasurer, AutoCloseable {
     public TransformAndClip(Transform transform, Area clip) {
       this.transform = transform;
       this.clip = clip;
+    }
+
+    public void dispose() {
+      transform.dispose();
+    }
+  }
+
+  private static class Overlay {
+    public final Transform transform;
+    public final Runnable renderer;
+
+    public Overlay(Transform transform, Runnable renderer) {
+      this.transform = transform;
+      this.renderer = renderer;
     }
 
     public void dispose() {

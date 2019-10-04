@@ -84,11 +84,11 @@ func (verb *traceVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 
 	if api.traceType == service.TraceType_Perfetto {
 		if verb.Perfetto == "" {
-			app.Usage(ctx, "The Perfetto config is required for Perfetto traces.")
+			app.Usage(ctx, "The Perfetto config is required for System Profiles.")
 			return nil
 		}
 		if verb.Local.Port != 0 {
-			app.Usage(ctx, "-local-port is not supported for Perfetto traces.")
+			app.Usage(ctx, "-local-port is not supported for System Profiles.")
 			return nil
 		}
 	}
@@ -227,25 +227,26 @@ func (verb *traceVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 	}
 
 	options := &service.TraceOptions{
-		Type:                      api.traceType,
-		Apis:                      api.apis,
-		AdditionalCommandLineArgs: verb.AdditionalArgs,
-		Cwd:                       verb.WorkingDir,
-		Environment:               verb.Env,
-		Duration:                  float32(verb.For.Seconds()),
-		ObserveFrameFrequency:     uint32(verb.Observe.Frames),
-		ObserveDrawFrequency:      uint32(verb.Observe.Draws),
-		StartFrame:                uint32(verb.Start.At.Frame),
-		FramesToCapture:           uint32(verb.Capture.Frames),
-		DisablePcs:                verb.Disable.PCS,
-		RecordErrorState:          verb.Record.Errors,
-		DeferStart:                verb.Start.Defer,
-		NoBuffer:                  verb.No.Buffer,
-		HideUnknownExtensions:     verb.Disable.Unknown.Extensions,
-		RecordTraceTimes:          verb.Record.TraceTimes,
-		ClearCache:                verb.Clear.Cache,
-		ServerLocalSavePath:       out,
-		PipeName:                  verb.PipeName,
+		Type:                         api.traceType,
+		Apis:                         api.apis,
+		AdditionalCommandLineArgs:    verb.AdditionalArgs,
+		Cwd:                          verb.WorkingDir,
+		Environment:                  verb.Env,
+		Duration:                     float32(verb.For.Seconds()),
+		ObserveFrameFrequency:        uint32(verb.Observe.Frames),
+		ObserveDrawFrequency:         uint32(verb.Observe.Draws),
+		StartFrame:                   uint32(verb.Start.At.Frame),
+		FramesToCapture:              uint32(verb.Capture.Frames),
+		DisablePcs:                   verb.Disable.PCS,
+		RecordErrorState:             verb.Record.Errors,
+		DeferStart:                   verb.Start.Defer,
+		NoBuffer:                     verb.No.Buffer,
+		HideUnknownExtensions:        verb.Disable.Unknown.Extensions,
+		RecordTraceTimes:             verb.Record.TraceTimes,
+		ClearCache:                   verb.Clear.Cache,
+		ServerLocalSavePath:          out,
+		PipeName:                     verb.PipeName,
+		DisableCoherentMemoryTracker: verb.Disable.CoherentMemoryTracker,
 	}
 	target(options)
 
@@ -312,7 +313,7 @@ func (verb *traceVerb) Run(ctx context.Context, flags flag.FlagSet) error {
 				})
 				handlerInstalled = true
 			}
-			log.I(ctx, "Capturing %+v", status.BytesCaptured)
+			log.I(ctx, "Captured bytes: %+v", status.BytesCaptured)
 		}
 		if status.Status == service.TraceStatus_Done {
 			return true, nil

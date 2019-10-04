@@ -21,6 +21,7 @@ import static com.google.gapid.widgets.Widgets.createLink;
 import static com.google.gapid.widgets.Widgets.filling;
 import static com.google.gapid.widgets.Widgets.withLayoutData;
 import static com.google.gapid.widgets.Widgets.withMargin;
+import static com.google.gapid.widgets.Widgets.withSpacing;
 
 import com.google.gapid.widgets.Theme;
 
@@ -41,33 +42,47 @@ import org.eclipse.swt.widgets.Link;
  * Displays status information at the bottom of the main window.
  */
 public class StatusBar extends Composite {
+  private final Composite memoryStatus;
+  private final Composite replayStatus;
   private final Composite serverStatus;
   private final HeapStatus heap;
   private final Label serverPrefix;
   private final Label server;
+  private final Label replay;
   private final Link notification;
   private Runnable onNotificationClick = null;
 
   public StatusBar(Composite parent, Theme theme) {
     super(parent, SWT.NONE);
 
-    setLayout(withMargin(new GridLayout(2, false), 0, 0));
-
+    setLayout(withSpacing(withMargin(new GridLayout(5, false), 0, 0), 5, 0));
+    memoryStatus = withLayoutData(
+        createComposite(this, filling(new RowLayout(SWT.HORIZONTAL), true, false)),
+        new GridData(SWT.LEFT, SWT.FILL, false, false));
+    replayStatus = withLayoutData(
+        createComposite(this, filling(new RowLayout(SWT.HORIZONTAL), true, false)),
+        new GridData(SWT.LEFT, SWT.FILL, false, false));
     serverStatus = withLayoutData(
         createComposite(this, filling(new RowLayout(SWT.HORIZONTAL), true, false)),
         new GridData(SWT.LEFT, SWT.FILL, true, false));
-    createLabel(serverStatus, "Server:");
-    heap = new HeapStatus(serverStatus, theme);
-    withLayoutData(new Label(serverStatus, SWT.SEPARATOR | SWT.VERTICAL), new RowData(SWT.DEFAULT, 1));
-    serverPrefix = createLabel(serverStatus, "");
-    server = createLabel(serverStatus, "");
-    serverStatus.setVisible(false);
-
     notification = withLayoutData(createLink(this, "", $ -> {
       if (onNotificationClick != null) {
         onNotificationClick.run();
       }
     }), new GridData(SWT.RIGHT, SWT.FILL, false, false));
+
+    createLabel(memoryStatus, "Server:");
+    heap = new HeapStatus(memoryStatus, theme);
+    withLayoutData(new Label(memoryStatus, SWT.SEPARATOR | SWT.VERTICAL), new RowData(SWT.DEFAULT, 1));
+
+    createLabel(replayStatus, "Replay:");
+    replay = createLabel(replayStatus, "");
+    withLayoutData(new Label(replayStatus, SWT.SEPARATOR | SWT.VERTICAL), new RowData(SWT.DEFAULT, 1));
+    replayStatus.setVisible(false);
+
+    serverPrefix = createLabel(serverStatus, "");
+    server = createLabel(serverStatus, "");
+    serverStatus.setVisible(false);
   }
 
   /**
@@ -97,6 +112,12 @@ public class StatusBar extends Composite {
   public void setServerHeapSize(long heapSize) {
     serverStatus.setVisible(true);
     heap.setHeap(heapSize);
+    layout();
+  }
+
+  public void setReplayStatus(String text) {
+    replayStatus.setVisible(true);
+    replay.setText(text);
     layout();
   }
 

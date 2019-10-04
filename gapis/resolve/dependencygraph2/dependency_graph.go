@@ -76,6 +76,26 @@ type NodeID uint32
 
 const NodeNoID = NodeID(math.MaxUint32)
 
+// NodeIDSorter is a structure to use for sorting NodeIDs in the sort package
+type NodeIDSorter struct {
+	Nodes []NodeID
+}
+
+// Len returns the length of the node list
+func (s *NodeIDSorter) Len() int {
+	return len(s.Nodes)
+}
+
+// Less returns trus if the elements at index i are less than j
+func (s *NodeIDSorter) Less(i, j int) bool {
+	return s.Nodes[i] < s.Nodes[j]
+}
+
+// Swap swaps the locations of 2 nodes in the list
+func (s *NodeIDSorter) Swap(i, j int) {
+	s.Nodes[i], s.Nodes[j] = s.Nodes[j], s.Nodes[i]
+}
+
 // DependencyGraph stores the dependencies among api calls and memory observations,
 type DependencyGraph interface {
 
@@ -130,6 +150,10 @@ type DependencyGraph interface {
 	// Capture returns the capture whose dependencies are stored in this graph
 	Capture() *capture.GraphicsCapture
 
+	// GetUnopenedForwardDependencies returns the commands that have dependencies that
+	// are not part of the capture.
+	GetUnopenedForwardDependencies() []api.CmdID
+
 	// GetCommand returns the command identified by the given CmdID
 	GetCommand(api.CmdID) api.Cmd
 
@@ -150,15 +174,16 @@ type obsNodeIDs struct {
 }
 
 type dependencyGraph struct {
-	capture          *capture.GraphicsCapture
-	cmdNodeIDs       *api.SubCmdIdxTrie
-	initialCommands  []api.Cmd
-	nodes            []Node
-	numDependencies  uint64
-	dependenciesFrom [][]NodeID
-	dependenciesTo   [][]NodeID
-	nodeAccesses     []NodeAccesses
-	stateRefs        map[api.RefID]RefFrag
+	capture                     *capture.GraphicsCapture
+	cmdNodeIDs                  *api.SubCmdIdxTrie
+	initialCommands             []api.Cmd
+	nodes                       []Node
+	numDependencies             uint64
+	dependenciesFrom            [][]NodeID
+	dependenciesTo              [][]NodeID
+	nodeAccesses                []NodeAccesses
+	unopenedForwardDependencies []api.CmdID
+	stateRefs                   map[api.RefID]RefFrag
 
 	config DependencyGraphConfig
 }
@@ -301,6 +326,10 @@ func (g *dependencyGraph) Capture() *capture.GraphicsCapture {
 	return g.capture
 }
 
+func (g *dependencyGraph) GetUnopenedForwardDependencies() []api.CmdID {
+	return g.unopenedForwardDependencies
+}
+
 // GetCommand returns the command identified by the given CmdID
 func (g *dependencyGraph) GetCommand(cmdID api.CmdID) api.Cmd {
 	if cmdID.IsReal() {
@@ -361,6 +390,10 @@ func (g *dependencyGraph) setDependencies(src NodeID, targets []NodeID) {
 	g.numDependencies -= (uint64)(len(g.dependenciesFrom[src]))
 	g.numDependencies += (uint64)(len(targets))
 	g.dependenciesFrom[src] = targets
+}
+
+func (g *dependencyGraph) addUnopenedForwardDependency(id api.CmdID) {
+	g.unopenedForwardDependencies = append(g.unopenedForwardDependencies, id)
 }
 
 func (g *dependencyGraph) setStateRefs(stateRefs map[api.RefID]RefFrag) {

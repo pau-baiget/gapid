@@ -50,10 +50,28 @@ class ConnectionHeader {
   static const uint32_t FLAG_HIDE_UNKNOWN_EXTENSIONS = 0x00000040;
   // Requests timestamps to be stored in the capture
   static const uint32_t FLAG_STORE_TIMESTAMPS = 0x00000080;
+  // Disables the coherent memory tracker (useful for debug)
+  static const uint32_t FLAG_DISABLE_COHERENT_MEMORY_TRACKER = 0x00000100;
 
   // read reads the ConnectionHeader from the provided stream, returning true
   // on success or false on error.
   bool read(core::StreamReader* reader);
+
+  void read_dummy() {
+    mMagic[0] = 's';
+    mMagic[1] = 'p';
+    mMagic[2] = 'y';
+    mMagic[3] = '0';
+    mVersion = 1;
+    mObserveFrameFrequency = 0;
+    mObserveDrawFrequency = 0;
+    mStartFrame = -1;
+    mNumFrames = 0;
+    mAPIs = 0;
+    mFlags = 0;
+    mGvrHandle = 0;
+    mLibInterceptorPath[0] = '\0';
+  }
 
   uint8_t mMagic[4];                // 's', 'p', 'y', '0'
   uint32_t mVersion;                // 1

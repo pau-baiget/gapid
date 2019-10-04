@@ -26,6 +26,7 @@ go_test(
     srcs = ["postback_test.go"],
     data = [
         "//cmd/gapir/cc:gapir",
+        "//core/vulkan/vk_api_timing_layer/cc:libVkLayer_APITiming",
         "//core/vulkan/vk_virtual_swapchain/cc:json",
         "//core/vulkan/vk_virtual_swapchain/cc:libVkLayer_VirtualSwapchain",
     ],
@@ -36,6 +37,7 @@ go_test(
     ],
     deps = [
         "//core/app:go_default_library",
+        "//core/app/status:go_default_library",
         "//core/data/binary:go_default_library",
         "//core/event/task:go_default_library",
         "//core/log:go_default_library",

@@ -24,12 +24,15 @@ import (
 
 	"github.com/google/gapid/core/app/crash"
 	"github.com/google/gapid/core/app/status"
+	"github.com/google/gapid/core/data/id"
 	"github.com/google/gapid/core/event/task"
 )
 
+var lastTaskID uint32
+
 // Executor is the executor of Executables.
 // The executor can only work on one list of Executables at a time.
-type Executor func(context.Context, []Executable, Batch)
+type Executor func(context.Context, *status.Replay, []Executable, Batch)
 
 // Executable holds a task and it's result.
 type Executable struct {
@@ -63,14 +66,15 @@ type Batch struct {
 
 // Scheduler schedules Tasks to Executors, batching where possible.
 type Scheduler struct {
+	device   id.ID
 	pending  chan *job
 	exec     Executor
 	queueLen uint32
 }
 
 // New returns a new Scheduler that will execute Tasks with exec.
-func New(ctx context.Context, exec Executor) *Scheduler {
-	s := &Scheduler{exec: exec, pending: make(chan *job, 32)}
+func New(ctx context.Context, device id.ID, exec Executor) *Scheduler {
+	s := &Scheduler{device: device, exec: exec, pending: make(chan *job, 32)}
 	crash.Go(func() { s.run(ctx) })
 	return s
 }
@@ -109,6 +113,7 @@ func (s *Scheduler) run(ctx context.Context) {
 	defer status.Finish(ctx)
 
 	bins := map[Batch]*bin{}
+	var binLock sync.RWMutex
 
 	const (
 		caseShouldStop = iota
@@ -127,6 +132,9 @@ func (s *Scheduler) run(ctx context.Context) {
 	}
 
 	addJob := func(j *job) {
+		binLock.Lock()
+		defer binLock.Unlock()
+
 		if b, ok := bins[j.batch]; ok {
 			b.jobs = append(b.jobs, j)
 		} else {
@@ -138,11 +146,55 @@ func (s *Scheduler) run(ctx context.Context) {
 				batch:     j.batch,
 				jobs:      []*job{j},
 				interrupt: interrupt,
+				status:    status.ReplayQueued(ctx, atomic.AddUint32(&lastTaskID, 1), s.device),
 			}
 			interrupts = append(interrupts, interrupt)
 		}
 		atomic.AddUint32(&s.queueLen, 1)
 	}
+
+	readyChan := make(chan *bin, 32)
+	crash.Go(func() {
+		for {
+			// Check if we should stop.
+			select {
+			case <-readyChan: // pro-actively drain the ready chan.
+			case <-task.ShouldStop(ctx):
+				return
+			default:
+			}
+
+			// Find the highest priority bin to execute.
+			binLock.RLock()
+			var best *bin
+			for _, b := range bins {
+				if b.isReady() {
+					if best == nil || best.batch.Priority < b.batch.Priority {
+						best = b
+					}
+				}
+			}
+			binLock.RUnlock()
+
+			// If no bin is ready, wait for one on the ready channel.
+			if best == nil {
+				select {
+				case <-readyChan:
+					continue
+				case <-task.ShouldStop(ctx):
+					return
+				}
+			}
+
+			binLock.Lock()
+			delete(bins, best.batch)
+			binLock.Unlock()
+
+			// Execute the batch.
+			best.exec(ctx, s.exec)
+			atomic.AddUint32(&s.queueLen, -uint32(len(best.jobs)))
+		}
+	})
 
 	for !task.Stopped(ctx) {
 		i, v, ok := reflect.Select(interrupts)
@@ -156,47 +208,26 @@ func (s *Scheduler) run(ctx context.Context) {
 			// results.
 			addJob(j)
 		default: // precondition
-			if ok {
-				// Received a value on the open chan.
-				// Once the predicate has passes, it must always pass.
-				for _, b := range bins {
-					if b.interrupt == interrupts[i] {
+			binLock.RLock()
+			for _, b := range bins {
+				if b.interrupt == interrupts[i] {
+					if ok {
+						// Received a value on an open chan.
+						// Once the predicate has passed, it must always pass.
 						b.interrupt.Chan = reflect.ValueOf(task.FiredSignal)
 					}
+					readyChan <- b
 				}
 			}
-			// Collect any remaining pending jobs
-			s.collect(addJob)
-			// Find the highest priority bin to execute.
-			var best *bin
-			for _, b := range bins {
-				if b.isReady() {
-					if best == nil || best.batch.Priority < b.batch.Priority {
-						best = b
-					}
-				}
-			}
-			// Execute the batch.
-			best.exec(ctx, s.exec)
-			// Drop the batch.
-			delete(bins, best.batch)
-			atomic.AddUint32(&s.queueLen, -uint32(len(best.jobs)))
+
 			// Rebuild interrupts.
 			interrupts = interrupts[:casePreconditions]
 			for _, b := range bins {
-				interrupts = append(interrupts, b.interrupt)
+				if !b.isReady() {
+					interrupts = append(interrupts, b.interrupt)
+				}
 			}
-		}
-	}
-}
-
-func (s *Scheduler) collect(f func(j *job)) {
-	for {
-		select {
-		case j := <-s.pending:
-			f(j)
-		default:
-			return
+			binLock.RUnlock()
 		}
 	}
 }
@@ -221,6 +252,7 @@ type bin struct {
 	batch     Batch
 	jobs      []*job
 	interrupt reflect.SelectCase
+	status    *status.Replay
 }
 
 // isReady returns true if the bin is ready to be executed.
@@ -244,7 +276,9 @@ func (b *bin) exec(ctx context.Context, exec Executor) {
 			l = append(l, j.executable)
 		}
 	}
-	exec(ctx, l, b.batch)
+	b.status.Start(ctx)
+	exec(ctx, b.status, l, b.batch)
+	b.status.Finish(ctx)
 }
 
 type job struct {

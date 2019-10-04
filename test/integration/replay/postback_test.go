@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/google/gapid/core/app"
+	"github.com/google/gapid/core/app/status"
 	"github.com/google/gapid/core/data/binary"
 	"github.com/google/gapid/core/event/task"
 	"github.com/google/gapid/core/log"
@@ -72,6 +73,13 @@ func doReplay(t *testing.T, f func(*builder.Builder)) error {
 	payload, decoder, notification, err := b.Build(ctx)
 	if err != nil {
 		t.Errorf("Build failed with error: %v", err)
+		return err
+	}
+
+	s := status.ReplayQueued(ctx, 0, device.Instance().ID.ID())
+	err = b.RegisterReplayStatusReader(ctx, s)
+	if err != nil {
+		t.Errorf("Failed to register replay status notification reader.", err)
 		return err
 	}
 
